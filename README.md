@@ -7,48 +7,43 @@ A lightweight CLI tool to monitor real-time **Claude Code** and **Codex** usage 
 ## Preview
 
 ```
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  Claude Code
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  Range: since 05-19 15:24 CST  (last 7 days)
+────────────────────────────────────────────────────
+                    Claude Code                     
 
-  claude-opus-4-7
-    Calls:         426
-    Input total:   109.9M  (cache hit 96%)
-    Output total:  771.9K
-    Output/day:    771.9K  (1 day recorded)
+  Stats from: 05-19 15:24 CST  (last 7 days)
+  Total output: 3.2M  |  Net input (non-cache): 13.9M
 
-  claude-sonnet-4-6
-    Calls:         2,494
-    Input total:   453.6M  (cache hit 98%)
-    Output total:    2.4M
-    Output/day:    299.8K  (8 days recorded)
+  Output share
+  sonnet-4-6  ███████████████░░░░░  76%
+  opus-4-7    █████░░░░░░░░░░░░░░░  24%
 
-  ────────────────────────────────────────────────────
-  Total output: 3.2M  |  Net input (non-cached): 13.9M
-
+  Live quota  (independent of --days range)
   Source: claude.ai usage API  (browser session)
-  5h window   [██████████████░░░░░░]  68% left  (32% used)
-  Resets at:  05-26 16:20 CST
-  7d window   [██████████████████░░]  89% left  (11% used)
-  Resets at:  05-31 13:00 CST
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  CodeX (OpenAI GPT-5)
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  5-hour window  ██████████████░░░░░░  left 68%  (used 32%)
+  Resets at: 05-26 16:20 CST
 
-  As of: 05-26 15:24 CST  (live)
+  7-day window  ██████████████████░░  left 89%  (used 11%)
+  Resets at: 05-31 13:00 CST
+
+  📊 At current rate (0.3%/hr), 89% left ≈ 344 hrs
+
+────────────────────────────────────────────────────
+                CodeX (OpenAI GPT-5)                
+
+  Data time: 05-26 15:24 CST  (live)
+  Source: codex app-server WebSocket
   Plan: PLUS
 
-  5h window   [████████░░░░░░░░░░░░]  39% left  (61% used)
-  Resets at:  05-26 17:22 CST
+  5-hour window  ████████░░░░░░░░░░░░  left 39%  (used 61%)
+  Resets at: 05-26 17:22 CST
 
-  7d window   [██████████████████░░]  89% left  (11% used)
-  Resets at:  06-01 18:26 CST
+  7-day window  ██████████████████░░  left 89%  (used 11%)
+  Resets at: 06-01 18:26 CST
 
-  📊 At current rate (0.5%/h), 89% remaining ≈ 170h left
+  📊 At current rate (0.5%/hr), 89% left ≈ 170 hrs
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+────────────────────────────────────────────────────
 ```
 
 ## Requirements
