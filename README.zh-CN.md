@@ -63,7 +63,7 @@
 **1. 克隆项目**
 
 ```bash
-git clone https://github.com/zhuchenxi113/ai-limit.git ~/Developer/ai-limit
+git clone https://gitee.com/zhuchenxi113/ai-limit.git ~/Developer/ai-limit
 ```
 
 **2. 安装依赖**
