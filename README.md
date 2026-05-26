@@ -93,6 +93,14 @@ ai-limit              # Last 7 days (default)
 ai-limit --days 1     # Today only
 ai-limit --all        # Full history
 ai-limit --offline    # Skip Codex app-server, use local snapshot only
+ai-limit --detail     # Show per-model token breakdown
+```
+
+Output language is auto-detected from the system locale (Chinese on zh systems, English elsewhere). Override with the `AI_LIMIT_LANG` environment variable:
+
+```bash
+AI_LIMIT_LANG=en ai-limit   # force English
+AI_LIMIT_LANG=zh ai-limit   # force Chinese
 ```
 
 ## Data Sources

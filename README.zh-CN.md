@@ -93,6 +93,14 @@ ai-limit              # 最近 7 天（默认）
 ai-limit --days 1     # 今天
 ai-limit --all        # 全部历史
 ai-limit --offline    # 不启动 CodeX app-server，只读本地快照
+ai-limit --detail     # 展示每个模型的详细 token 统计
+```
+
+输出语言自动识别系统 locale（中文系统输出中文，其他系统输出英文）。可用 `AI_LIMIT_LANG` 环境变量手动指定：
+
+```bash
+AI_LIMIT_LANG=en ai-limit   # 强制英文
+AI_LIMIT_LANG=zh ai-limit   # 强制中文
 ```
 
 ## 数据来源
