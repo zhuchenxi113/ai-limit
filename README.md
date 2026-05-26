@@ -23,7 +23,7 @@ A lightweight CLI tool to monitor real-time **Claude Code** and **Codex** usage 
   5-hour window  ██████████████░░░░░░  left 68%  (used 32%)
   Resets at: 05-26 16:20 CST
 
-  7-day window  ██████████████████░░  left 89%  (used 11%)
+  7-day window   ██████████████████░░  left 89%  (used 11%)
   Resets at: 05-31 13:00 CST
 
   📊 At current rate (0.3%/hr), 89% left ≈ 344 hrs
@@ -38,7 +38,7 @@ A lightweight CLI tool to monitor real-time **Claude Code** and **Codex** usage 
   5-hour window  ████████░░░░░░░░░░░░  left 39%  (used 61%)
   Resets at: 05-26 17:22 CST
 
-  7-day window  ██████████████████░░  left 89%  (used 11%)
+  7-day window   ██████████████████░░  left 89%  (used 11%)
   Resets at: 06-01 18:26 CST
 
   📊 At current rate (0.5%/hr), 89% left ≈ 170 hrs

@@ -647,7 +647,7 @@ def render_codex(since: datetime.datetime, offline: bool = False):
     w_min = secondary.get("window_minutes", 10080)
     if w_min:
         days = w_min // 60 // 24
-        w_label = t(f"{days}天滚动窗  ", f"{days}-day window")
+        w_label = t(f"{days}天滚动窗  ", f"{days}-day window ")
     else:
         w_label = t("周额度    ", "Weekly quota")
     print(f"  {w_label}  {bar(w_remaining)}  {t(f'剩余 {w_remaining:.0f}%  (已用 {w_pct:.0f}%)', f'left {w_remaining:.0f}%  (used {w_pct:.0f}%)')}")
