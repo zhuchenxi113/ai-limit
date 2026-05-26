@@ -24,7 +24,7 @@ import time
 CLAUDE_BASE = pathlib.Path.home() / ".claude" / "projects"
 CODEX_BASE = pathlib.Path.home() / ".codex" / "sessions"
 TZ_LOCAL = datetime.timezone(datetime.timedelta(hours=8))  # CST
-REMOTE_TIMEOUT_SEC = 8
+REMOTE_TIMEOUT_SEC = 15
 CLAUDE_WEB_TIMEOUT_SEC = 10
 
 
@@ -507,7 +507,8 @@ def render_claude(totals: dict, since: datetime.datetime, days_count: int,
         five_h = web_data.get("five_hour") or {}
         seven_d = web_data.get("seven_day") or {}
         if five_h or seven_d:
-            print(f"\n  数据来源: claude.ai usage API  (浏览器登录态)")
+            print(f"\n  实时额度  (与 --days 统计范围无关)")
+            print(f"  数据来源: claude.ai usage API  (浏览器登录态)")
             for label, win in [("5小时滚动窗", five_h), ("7天滚动窗", seven_d)]:
                 if not win:
                     continue
@@ -526,7 +527,8 @@ def render_claude(totals: dict, since: datetime.datetime, days_count: int,
             print(f"\n  claude.ai usage 原始响应: {json.dumps(web_data, ensure_ascii=False)[:400]}")
             print(f"  →  {CLAUDE_USAGE_URL}  (Cmd+双击打开)")
     elif web_error:
-        print(f"\n  ⚠️  Claude 实时额度读取失败: {web_error}")
+        print(f"\n  实时额度  (与 --days 统计范围无关)")
+        print(f"  ⚠️  读取失败: {web_error}")
         print(f"  →  {CLAUDE_USAGE_URL}  (Cmd+双击打开)")
     else:
         print(f"\n  ⚠️  Claude 周额度百分比本地不可得  →  {CLAUDE_USAGE_URL}  (Cmd+双击打开)")
