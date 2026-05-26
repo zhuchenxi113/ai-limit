@@ -10,6 +10,7 @@ usage.py — 查看 Claude Code + CodeX 本周 token 消耗与额度状态
 import argparse
 import base64
 import datetime
+import locale as _locale
 import os
 import json
 import pathlib
@@ -26,6 +27,24 @@ CODEX_BASE = pathlib.Path.home() / ".codex" / "sessions"
 TZ_LOCAL = datetime.timezone(datetime.timedelta(hours=8))  # CST
 REMOTE_TIMEOUT_SEC = 15
 CLAUDE_WEB_TIMEOUT_SEC = 10
+
+
+def _detect_lang() -> str:
+    env = os.environ.get("AI_LIMIT_LANG", "")
+    if env:
+        return "zh" if env.lower().startswith("zh") else "en"
+    try:
+        loc = _locale.getlocale()[0] or os.environ.get("LANG", "")
+        return "zh" if loc.startswith("zh") else "en"
+    except Exception:
+        return "en"
+
+
+LANG = _detect_lang()
+
+
+def t(zh: str, en: str) -> str:
+    return zh if LANG == "zh" else en
 
 
 # ── 工具函数 ─────────────────────────────────────────────────────────────────
@@ -80,7 +99,10 @@ def live_claude_usage(timeout: int = CLAUDE_WEB_TIMEOUT_SEC) -> dict:
     try:
         import browser_cookie3
     except ImportError:
-        raise ClaudeWebError("未安装 browser_cookie3，请先运行: pip install browser-cookie3")
+        raise ClaudeWebError(t(
+            "未安装 browser_cookie3，请先运行: pip install browser-cookie3",
+            "browser_cookie3 not installed, run: pip install browser-cookie3",
+        ))
 
     cookies = []
     errs = []
@@ -95,12 +117,18 @@ def live_claude_usage(timeout: int = CLAUDE_WEB_TIMEOUT_SEC) -> dict:
 
     if not cookies:
         detail = f" ({'; '.join(errs)})" if errs else ""
-        raise ClaudeWebError(f"无法读取浏览器 cookie{detail}，请先在浏览器登录 claude.ai")
+        raise ClaudeWebError(t(
+            f"无法读取浏览器 cookie{detail}，请先在浏览器登录 claude.ai",
+            f"cannot read browser cookies{detail}, please log in to claude.ai first",
+        ))
 
     cookie_dict = dict(cookies)
     org_id = cookie_dict.get("lastActiveOrg", "")
     if not org_id:
-        raise ClaudeWebError("未能从 cookie 读取 org ID，请先在浏览器打开 claude.ai")
+        raise ClaudeWebError(t(
+            "未能从 cookie 读取 org ID，请先在浏览器打开 claude.ai",
+            "could not read org ID from cookie, please open claude.ai in your browser",
+        ))
 
     cookie_header = "; ".join(f"{n}={v}" for n, v in cookies)
 
@@ -148,8 +176,11 @@ def collect_claude(since: datetime.datetime):
     since 必须是 aware datetime (UTC)
     """
     totals: dict[str, dict] = {}
+    since_ts = since.timestamp()
     for jf in sorted(CLAUDE_BASE.rglob("*.jsonl")):
         try:
+            if jf.stat().st_mtime < since_ts:
+                continue
             _parse_claude_file(jf, since, totals)
         except Exception:
             pass
@@ -372,7 +403,7 @@ def current_codex_rate_limits(offline: bool = False):
     if not offline:
         try:
             ts, rl = live_codex_rate_limits()
-            return ts, rl, "实时", None
+            return ts, rl, "live", None
         except (CodexRemoteError, OSError, subprocess.SubprocessError) as e:
             fallback_reason = str(e) or e.__class__.__name__
         except Exception as e:
@@ -381,7 +412,7 @@ def current_codex_rate_limits(offline: bool = False):
         fallback_reason = "--offline"
 
     ts, rl = latest_codex_rate_limits()
-    return ts, rl, "本地快照", fallback_reason
+    return ts, rl, "snapshot", fallback_reason
 
 
 def latest_codex_rate_limits():
@@ -469,91 +500,128 @@ SEP = "─" * 52
 
 
 def render_claude(totals: dict, since: datetime.datetime, days_count: int,
-                  web_data: dict = None, web_error: str = None):
-    print(f"\n{'━'*52}")
-    print("  Claude Code")
-    print(f"{'━'*52}")
+                  web_data: dict = None, web_error: str = None, detail: bool = False):
+    title = "Claude Code"
+    print(f"\n{SEP}")
+    print(f"{title.center(52)}")
+    print()
     since_local = since.astimezone(TZ_LOCAL)
-    print(f"  统计范围: {since_local.strftime('%m-%d %H:%M')} CST 起  ({days_count} 天内)\n")
+    print(f"  {t('统计范围', 'Stats from')}: {since_local.strftime('%m-%d %H:%M')} CST  ({t(f'{days_count} 天内', f'last {days_count} days')})")
 
     if not totals:
-        print("  （该时间段无记录）")
+        print(t("  （该时间段无记录）", "  (no records in this period)"))
         return
 
-    grand_out = 0
-    grand_in_net = 0
+    active = {m: d for m, d in totals.items() if m != "<synthetic>"}
+    grand_out = sum(d["output"] for d in active.values())
+    grand_in_net = sum(d["input"] + d["cache_create"] for d in active.values())
+    show_ratio = len(active) > 1 and grand_out > 0
 
-    for model in sorted(totals.keys()):
-        if model == "<synthetic>":
-            continue  # API 错误占位记录，无实际 token 消耗
-        d = totals[model]
-        total_in = d["input"] + d["cache_create"] + d["cache_read"]
-        cache_pct = d["cache_read"] / total_in * 100 if total_in else 0
-        print(f"  {model}")
-        print(f"    调用次数: {d['calls']:,}")
-        print(f"    输入合计: {fmt_tokens(total_in):>8}  (缓存命中 {cache_pct:.0f}%)")
-        print(f"    输出合计: {fmt_tokens(d['output']):>8}")
-        actual_days = len(d["days"])
-        if actual_days > 0:
-            rate = d["output"] / actual_days
-            print(f"    日均输出: {fmt_tokens(int(rate)):>8}  (共 {actual_days} 天有记录)")
-        print()
-        grand_out += d["output"]
-        grand_in_net += d["input"] + d["cache_create"]
+    if detail:
+        for model in sorted(active.keys()):
+            d = active[model]
+            total_in = d["input"] + d["cache_create"] + d["cache_read"]
+            cache_pct = d["cache_read"] / total_in * 100 if total_in else 0
+            if show_ratio:
+                pct = d["output"] / grand_out * 100
+                pct_s = '<1%' if pct < 1 else f'{pct:.0f}%'
+                ratio_str = t(f"  (占总输出 {pct_s})", f"  ({pct_s} of total output)")
+            else:
+                ratio_str = ""
+            print(f"  {model}")
+            print(f"    {t('调用次数', 'Calls')}: {d['calls']:,}")
+            print(f"    {t('输入合计', 'Input')}: {fmt_tokens(total_in):>8}  ({t(f'缓存命中 {cache_pct:.0f}%', f'cache hit {cache_pct:.0f}%')})")
+            print(f"    {t('输出合计', 'Output')}: {fmt_tokens(d['output']):>8}{ratio_str}")
+            actual_days = len(d["days"])
+            if actual_days > 0:
+                rate = d["output"] / actual_days
+                print(f"    {t('日均输出', 'Daily avg')}: {fmt_tokens(int(rate)):>8}  ({t(f'共 {actual_days} 天有记录', f'{actual_days} days recorded')})")
+            print()
 
-    print(f"  {SEP}")
-    print(f"  总输出: {fmt_tokens(grand_out)}  |  净输入(非缓存): {fmt_tokens(grand_in_net)}")
+    print(f"  {t('总输出', 'Total output')}: {fmt_tokens(grand_out)}  |  {t('净输入(非缓存)', 'Net input (non-cache)')}: {fmt_tokens(grand_in_net)}")
+    if show_ratio:
+        print(f"\n  {t('输出占比', 'Output share')}")
+        name_w = max(len(m.replace("claude-", "")) for m in active)
+        for m in sorted(active.keys(), key=lambda x: active[x]["output"], reverse=True):
+            pct = active[m]["output"] / grand_out * 100
+            pct_str = "<1%" if pct < 1 else f"{pct:.0f}%"
+            short = m.replace("claude-", "")
+            print(f"  {short:<{name_w}}  {bar(pct)}  {pct_str}")
     if web_data is not None:
         five_h = web_data.get("five_hour") or {}
         seven_d = web_data.get("seven_day") or {}
         if five_h or seven_d:
-            print(f"\n  实时额度  (与 --days 统计范围无关)")
-            print(f"  数据来源: claude.ai usage API  (浏览器登录态)")
-            for label, win in [("5小时滚动窗", five_h), ("7天滚动窗", seven_d)]:
+            print(f"\n  {t('实时额度  (与 --days 统计范围无关)', 'Live quota  (independent of --days range)')}")
+            print(f"  {t('数据来源', 'Source')}: claude.ai usage API  ({t('浏览器登录态', 'browser session')})")
+            print()
+            for win_key, label, win in [
+                ("5h", t("5小时滚动窗", "5-hour window"), five_h),
+                ("7d", t("7天滚动窗  ", "7-day window "), seven_d),
+            ]:
                 if not win:
                     continue
                 used = float(win.get("utilization", 0))
                 remaining = remaining_percent(used)
-                reset_str = ""
+                print(f"  {label}  {bar(remaining)}  {t(f'剩余 {remaining:.0f}%  (已用 {used:.0f}%)', f'left {remaining:.0f}%  (used {used:.0f}%)')}")
                 resets_at = win.get("resets_at")
+                reset_dt = None
                 if resets_at:
                     try:
                         reset_dt = datetime.datetime.fromisoformat(resets_at).astimezone(TZ_LOCAL)
-                        reset_str = f"\n  重置时间: {reset_dt.strftime('%m-%d %H:%M')} CST"
+                        print(f"  {t('重置时间', 'Resets at')}: {reset_dt.strftime('%m-%d %H:%M')} CST")
                     except Exception:
                         pass
-                print(f"  {label}  [{bar(remaining)}]  剩余 {remaining:.0f}%  (已用 {used:.0f}%){reset_str}")
+                printed_estimate = False
+                if win_key == "7d" and used and reset_dt:
+                    window_min = 7 * 24 * 60
+                    elapsed = (datetime.timedelta(minutes=window_min)
+                               - (reset_dt - datetime.datetime.now(TZ_LOCAL)))
+                    if elapsed.total_seconds() > 0:
+                        rate = used / (elapsed.total_seconds() / 3600)
+                        if rate > 0:
+                            hours_left = remaining / rate
+                            print(f"\n  📊 {t(f'按当前速率 ({rate:.1f}%/小时)，剩余 {remaining:.0f}% 约可用 {hours_left:.0f} 小时', f'At current rate ({rate:.1f}%/hr), {remaining:.0f}% left ≈ {hours_left:.0f} hrs')}")
+                            printed_estimate = True
+                if not printed_estimate:
+                    print()
         else:
-            print(f"\n  claude.ai usage 原始响应: {json.dumps(web_data, ensure_ascii=False)[:400]}")
-            print(f"  →  {CLAUDE_USAGE_URL}  (Cmd+双击打开)")
+            print(f"\n  {t('claude.ai usage 原始响应', 'claude.ai usage raw response')}: {json.dumps(web_data, ensure_ascii=False)[:400]}")
+            print(f"  →  {CLAUDE_USAGE_URL}  ({t('Cmd+双击打开', 'Cmd+double-click to open')})")
     elif web_error:
-        print(f"\n  实时额度  (与 --days 统计范围无关)")
-        print(f"  ⚠️  读取失败: {web_error}")
-        print(f"  →  {CLAUDE_USAGE_URL}  (Cmd+双击打开)")
+        print(f"\n  {t('实时额度  (与 --days 统计范围无关)', 'Live quota  (independent of --days range)')}")
+        print(f"  ⚠️  {t('读取失败', 'Failed to fetch')}: {web_error}")
+        print(f"  →  {CLAUDE_USAGE_URL}  ({t('Cmd+双击打开', 'Cmd+double-click to open')})")
     else:
-        print(f"\n  ⚠️  Claude 周额度百分比本地不可得  →  {CLAUDE_USAGE_URL}  (Cmd+双击打开)")
+        print(f"\n  ⚠️  {t('Claude 周额度百分比本地不可得', 'Claude quota unavailable locally')}  →  {CLAUDE_USAGE_URL}  ({t('Cmd+双击打开', 'Cmd+double-click to open')})")
 
 
 def render_codex(since: datetime.datetime, offline: bool = False):
-    print(f"\n{'━'*52}")
-    print("  CodeX (OpenAI GPT-5)")
-    print(f"{'━'*52}\n")
+    title = "CodeX (OpenAI GPT-5)"
+    print(f"\n{SEP}")
+    print(f"{title.center(52)}")
+    print()
 
     ts, rl, source, fallback_reason = current_codex_rate_limits(offline=offline)
     if not rl:
-        print("  （未找到 CodeX 会话数据）")
+        print(t("  （未找到 CodeX 会话数据）", "  (no CodeX session data found)"))
         return
 
     ts_local = ts.astimezone(TZ_LOCAL)
-    print(f"  数据时间: {ts_local.strftime('%m-%d %H:%M')} CST  ({source})")
-    if fallback_reason and source == "本地快照":
-        print(f"  实时读取失败: {fallback_reason}")
-    print(f"  套餐: {rl.get('plan_type', '?').upper()}\n")
+    source_label = t("实时", "live") if source == "live" else t("本地快照", "snapshot")
+    print(f"  {t('数据时间', 'Data time')}: {ts_local.strftime('%m-%d %H:%M')} CST  ({source_label})")
+    if source == "live":
+        print(f"  {t('数据来源', 'Source')}: codex app-server WebSocket")
+    else:
+        print(f"  {t('数据来源', 'Source')}: {t('本地快照', 'local snapshot')} (~/.codex/sessions/)")
+    if fallback_reason and source == "snapshot":
+        print(f"  {t('实时读取失败', 'Live fetch failed')}: {fallback_reason}")
+    print(f"  {t('套餐', 'Plan')}: {rl.get('plan_type', '?').upper()}")
+    print()
 
     secondary = rl.get("secondary") or {}
     primary = rl.get("primary") or {}
 
-    # 5小时窗
+    # 5-hour window
     p_pct = primary.get("used_percent", 0)
     p_remaining = remaining_percent(p_pct)
     p_reset = epoch_to_local(primary["resets_at"]) if primary.get("resets_at") else None
@@ -563,25 +631,30 @@ def render_codex(since: datetime.datetime, offline: bool = False):
     p_stale = data_age_min > p_min
     age_h = data_age_min / 60
     if p_stale:
-        stale_note = f"  ⚠️ {age_h:.0f}h 前的数据  →  {CODEX_USAGE_URL}  (Cmd+双击打开)"
+        stale_note = f"  ⚠️ {t(f'{age_h:.0f}h 前的数据', f'data {age_h:.0f}h old')}  →  {CODEX_USAGE_URL}  ({t('Cmd+双击打开', 'Cmd+double-click to open')})"
     else:
         stale_note = ""
-    print(f"  5小时滚动窗  [{bar(p_remaining)}]  剩余 {p_remaining:.0f}%  (已用 {p_pct:.0f}%){stale_note}")
+    p_label = t("5小时滚动窗", "5-hour window")
+    print(f"  {p_label}  {bar(p_remaining)}  {t(f'剩余 {p_remaining:.0f}%  (已用 {p_pct:.0f}%)', f'left {p_remaining:.0f}%  (used {p_pct:.0f}%)')}{stale_note}")
     if p_reset and not p_stale:
-        print(f"  重置时间: {p_reset.strftime('%m-%d %H:%M')} CST")
+        print(f"  {t('重置时间', 'Resets at')}: {p_reset.strftime('%m-%d %H:%M')} CST")
     print()
 
-    # 7天额度
+    # 7-day window
     w_pct = secondary.get("used_percent", 0)
     w_remaining = remaining_percent(w_pct)
     w_reset = epoch_to_local(secondary["resets_at"]) if secondary.get("resets_at") else None
     w_min = secondary.get("window_minutes", 10080)
-    w_label = f"{w_min // 60 // 24}天滚动窗" if w_min else "周额度"
-    print(f"  {w_label}  [{bar(w_remaining)}]  剩余 {w_remaining:.0f}%  (已用 {w_pct:.0f}%)")
+    if w_min:
+        days = w_min // 60 // 24
+        w_label = t(f"{days}天滚动窗  ", f"{days}-day window")
+    else:
+        w_label = t("周额度    ", "Weekly quota")
+    print(f"  {w_label}  {bar(w_remaining)}  {t(f'剩余 {w_remaining:.0f}%  (已用 {w_pct:.0f}%)', f'left {w_remaining:.0f}%  (used {w_pct:.0f}%)')}")
     if w_reset:
-        print(f"  重置时间: {w_reset.strftime('%m-%d %H:%M')} CST")
+        print(f"  {t('重置时间', 'Resets at')}: {w_reset.strftime('%m-%d %H:%M')} CST")
 
-    # 剩余周额度预估
+    # remaining quota estimate
     if w_pct and w_reset:
         remaining_pct = 100 - w_pct
         elapsed_since_reset = (
@@ -592,24 +665,27 @@ def render_codex(since: datetime.datetime, offline: bool = False):
             rate_per_hour = w_pct / (elapsed_since_reset.total_seconds() / 3600)
             if rate_per_hour > 0:
                 hours_left = remaining_pct / rate_per_hour
-                print(f"\n  📊 按当前速率 ({rate_per_hour:.1f}%/h)，"
-                      f"剩余 {remaining_pct:.0f}% 约可用 {hours_left:.0f}h")
+                print(f"\n  📊 {t(f'按当前速率 ({rate_per_hour:.1f}%/小时)，剩余 {remaining_pct:.0f}% 约可用 {hours_left:.0f} 小时', f'At current rate ({rate_per_hour:.1f}%/hr), {remaining_pct:.0f}% left ≈ {hours_left:.0f} hrs')}")
 
 
 def render_summary():
-    print(f"\n{'━'*52}\n")
+    print(f"\n{SEP}\n")
 
 
 # ── 主入口 ────────────────────────────────────────────────────────────────────
 
 def main():
-    parser = argparse.ArgumentParser(description="查看 Claude / CodeX 本周消耗")
+    parser = argparse.ArgumentParser(
+        description=t("查看 Claude / CodeX 本周消耗", "Show Claude / CodeX token usage and quota"),
+    )
     parser.add_argument("--days", type=int, default=7,
-                        help="统计最近 N 天（默认 7）")
+                        help=t("统计最近 N 天（默认 7）", "show last N days (default: 7)"))
     parser.add_argument("--all", action="store_true",
-                        help="统计全部历史（忽略 --days）")
+                        help=t("统计全部历史（忽略 --days）", "show all history (overrides --days)"))
     parser.add_argument("--offline", action="store_true",
-                        help="不调用 Codex app-server，只读取本地快照")
+                        help=t("不调用 Codex app-server，只读取本地快照", "skip Codex app-server, use local snapshot only"))
+    parser.add_argument("--detail", action="store_true",
+                        help=t("展示每个模型的详细 token 统计", "show per-model token breakdown"))
     args = parser.parse_args()
 
     now_utc = datetime.datetime.now(datetime.timezone.utc)
@@ -629,7 +705,7 @@ def main():
     except ClaudeWebError as e:
         web_error = str(e)
 
-    render_claude(claude_totals, since, days_count, web_data=web_data, web_error=web_error)
+    render_claude(claude_totals, since, days_count, web_data=web_data, web_error=web_error, detail=args.detail)
     render_codex(since, offline=args.offline)
     render_summary()
 
