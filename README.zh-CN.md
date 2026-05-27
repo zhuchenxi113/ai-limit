@@ -123,6 +123,7 @@ CodeX 优先通过官方 CLI 实时获取，失败时回退到本地快照并标
 - 浏览器 Cookie 读取仅支持 macOS（依赖系统 Keychain 解密 Chrome Cookie）
 - Claude 额度使用的是 claude.ai 内部接口，**非官方 API**，可能随版本变化失效
 - `<synthetic>` 模型记录是 Claude Code 遇到 API 错误时写入的占位，不计入统计
+- 各模型输出占比仅 Claude Code 提供；CodeX 不区分模型，无此数据
 
 ## 维护说明
 

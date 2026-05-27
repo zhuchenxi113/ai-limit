@@ -123,6 +123,7 @@ Prefers live data via the official Codex CLI. Falls back to the latest local sna
 - **macOS only**: browser cookie reading relies on the system Keychain to decrypt Chrome cookies
 - **Unofficial API**: Claude quota is fetched from an internal claude.ai endpoint, not an official API — it may break with future updates
 - `<synthetic>` model entries are error placeholders written by Claude Code on API failures; they are excluded from all statistics
+- Per-model output share is only available for Claude Code; Codex does not expose per-model breakdown
 
 ## Maintenance
 

@@ -24,7 +24,37 @@ import time
 
 CLAUDE_BASE = pathlib.Path.home() / ".claude" / "projects"
 CODEX_BASE = pathlib.Path.home() / ".codex" / "sessions"
-TZ_LOCAL = datetime.timezone(datetime.timedelta(hours=8))  # CST
+TZ_LOCAL = datetime.datetime.now().astimezone().tzinfo
+TZ_ABBR  = datetime.datetime.now().astimezone().strftime('%Z')
+
+# ── 外观配置（可直接修改） ────────────────────────────────────────────────────
+WARN_THRESHOLD = 20    # 剩余低于此值（%）显示黄色
+CRIT_THRESHOLD = 10    # 剩余低于此值（%）显示红色
+COLOR_OK   = "\033[32m"   # 绿：正常（ANSI 色码，32=绿 33=黄 36=青 34=蓝）
+COLOR_WARN = "\033[33m"   # 黄：偏低
+COLOR_CRIT = "\033[31m"   # 红：告警
+# ─────────────────────────────────────────────────────────────────────────────
+
+_C   = sys.stdout.isatty()
+_DIM = "\033[2m" if _C else ""
+_BOLD= "\033[1m" if _C else ""
+_RST = "\033[0m" if _C else ""
+_OK  = COLOR_OK   if _C else ""
+_WRN = COLOR_WARN if _C else ""
+_CRT = COLOR_CRIT if _C else ""
+
+def _bc(r: float) -> str:
+    return _OK if r >= WARN_THRESHOLD else (_WRN if r >= CRIT_THRESHOLD else _CRT)
+
+def _colored_bar(remaining: float, width: int = 20) -> str:
+    filled = round(remaining / 100 * width)
+    return f"{_bc(remaining)}{'█'*filled}{_DIM}{'░'*(width-filled)}{_RST}"
+
+def _bold_bar(pct: float, width: int = 20) -> str:
+    filled = round(pct / 100 * width)
+    return f"{_BOLD}{'█'*filled}{_RST}{_DIM}{'░'*(width-filled)}{_RST}"
+
+
 REMOTE_TIMEOUT_SEC = 15
 CLAUDE_WEB_TIMEOUT_SEC = 10
 
@@ -77,6 +107,22 @@ def fmt_tokens(n: int) -> str:
     if n >= 1_000:
         return f"{n/1_000:.1f}K"
     return str(n)
+
+
+def fmt_dt(dt: datetime.datetime) -> str:
+    return f"{dt.strftime('%m-%d %H:%M')} {TZ_ABBR}"
+
+
+def fmt_reset_dt(dt: datetime.datetime) -> str:
+    _bare_zh = ["一", "二", "三", "四", "五", "六", "日"]
+    _bare_en = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+    today = datetime.datetime.now(TZ_LOCAL).date()
+    next_week = dt.date().isocalendar()[:2] > today.isocalendar()[:2]
+    if LANG == "zh":
+        wd = f"下周{_bare_zh[dt.weekday()]}" if next_week else f"周{_bare_zh[dt.weekday()]}"
+    else:
+        wd = f"next {_bare_en[dt.weekday()]}" if next_week else _bare_en[dt.weekday()]
+    return f"{wd} {dt.strftime('%m-%d %H:%M')} {TZ_ABBR}"
 
 
 def find_free_local_port() -> int:
@@ -502,11 +548,11 @@ SEP = "─" * 52
 def render_claude(totals: dict, since: datetime.datetime, days_count: int,
                   web_data: dict = None, web_error: str = None, detail: bool = False):
     title = "Claude Code"
-    print(f"\n{SEP}")
-    print(f"{title.center(52)}")
+    print(f"\n{_DIM}{SEP}{_RST}")
+    print(f"{_BOLD}{title.center(52)}{_RST}")
     print()
     since_local = since.astimezone(TZ_LOCAL)
-    print(f"  {t('统计范围', 'Stats from')}: {since_local.strftime('%m-%d %H:%M')} CST  ({t(f'{days_count} 天内', f'last {days_count} days')})")
+    print(f"  {_DIM}{t('统计自', 'Since')}: {fmt_dt(since_local)}  ({t(f'近 {days_count} 天', f'last {days_count} days')}){_RST}")
 
     if not totals:
         print(t("  （该时间段无记录）", "  (no records in this period)"))
@@ -538,21 +584,21 @@ def render_claude(totals: dict, since: datetime.datetime, days_count: int,
                 print(f"    {t('日均输出', 'Daily avg')}: {fmt_tokens(int(rate)):>8}  ({t(f'共 {actual_days} 天有记录', f'{actual_days} days recorded')})")
             print()
 
-    print(f"  {t('总输出', 'Total output')}: {fmt_tokens(grand_out)}  |  {t('净输入(非缓存)', 'Net input (non-cache)')}: {fmt_tokens(grand_in_net)}")
+    print(f"  {t('总输出', 'Total output')}: {_BOLD}{fmt_tokens(grand_out)}{_RST}  |  {t('净输入(非缓存)', 'Net input (non-cache)')}: {_BOLD}{fmt_tokens(grand_in_net)}{_RST}")
     if show_ratio:
-        print(f"\n  {t('输出占比', 'Output share')}")
+        print(f"\n  {_BOLD}{t('输出占比', 'Output share')}{_RST}")
         name_w = max(len(m.replace("claude-", "")) for m in active)
         for m in sorted(active.keys(), key=lambda x: active[x]["output"], reverse=True):
             pct = active[m]["output"] / grand_out * 100
             pct_str = "<1%" if pct < 1 else f"{pct:.0f}%"
             short = m.replace("claude-", "")
-            print(f"  {short:<{name_w}}  {bar(pct)}  {pct_str}")
+            print(f"  {short:<{name_w}}  {_bold_bar(pct)}  {pct_str}")
     if web_data is not None:
         five_h = web_data.get("five_hour") or {}
         seven_d = web_data.get("seven_day") or {}
         if five_h or seven_d:
-            print(f"\n  {t('实时额度  (与 --days 统计范围无关)', 'Live quota  (independent of --days range)')}")
-            print(f"  {t('数据来源', 'Source')}: claude.ai usage API  ({t('浏览器登录态', 'browser session')})")
+            print(f"\n  {_BOLD}{t('实时额度', 'Live quota')}{_RST}  {_DIM}{t('(与 --days 统计范围无关)', '(independent of --days range)')}{_RST}")
+            print(f"  {_DIM}{t('数据来源', 'Source')}: claude.ai usage API  ({t('浏览器登录态', 'browser session')}){_RST}")
             print()
             for win_key, label, win in [
                 ("5h", t("5小时滚动窗", "5-hour window"), five_h),
@@ -562,13 +608,14 @@ def render_claude(totals: dict, since: datetime.datetime, days_count: int,
                     continue
                 used = float(win.get("utilization", 0))
                 remaining = remaining_percent(used)
-                print(f"  {label}  {bar(remaining)}  {t(f'剩余 {remaining:.0f}%  (已用 {used:.0f}%)', f'left {remaining:.0f}%  (used {used:.0f}%)')}")
+                r_str = f"{_bc(remaining)}{_BOLD}{remaining:.0f}%{_RST}"
+                print(f"  {label}  {_colored_bar(remaining)}  {t(f'剩余 {r_str}  {_DIM}(已用 {used:.0f}%){_RST}', f'left {r_str}  {_DIM}(used {used:.0f}%){_RST}')}")
                 resets_at = win.get("resets_at")
                 reset_dt = None
                 if resets_at:
                     try:
                         reset_dt = datetime.datetime.fromisoformat(resets_at).astimezone(TZ_LOCAL)
-                        print(f"  {t('重置时间', 'Resets at')}: {reset_dt.strftime('%m-%d %H:%M')} CST")
+                        print(f"  {_DIM}{t('重置时间', 'Resets at')}: {fmt_reset_dt(reset_dt)}{_RST}")
                     except Exception:
                         pass
                 printed_estimate = False
@@ -580,7 +627,7 @@ def render_claude(totals: dict, since: datetime.datetime, days_count: int,
                         rate = used / (elapsed.total_seconds() / 3600)
                         if rate > 0:
                             hours_left = remaining / rate
-                            print(f"\n  📊 {t(f'按当前速率 ({rate:.1f}%/小时)，剩余 {remaining:.0f}% 约可用 {hours_left:.0f} 小时', f'At current rate ({rate:.1f}%/hr), {remaining:.0f}% left ≈ {hours_left:.0f} hrs')}")
+                            print(f"\n  📊 {_DIM}{t(f'按当前速率 ({rate:.1f}%/小时)，剩余 {remaining:.0f}% 约可用', f'At current rate ({rate:.1f}%/hr), {remaining:.0f}% left ≈')}{_RST} {_BOLD}{hours_left:.0f} {t('小时', 'hrs')}{_RST}")
                             printed_estimate = True
                 if not printed_estimate:
                     print()
@@ -597,8 +644,8 @@ def render_claude(totals: dict, since: datetime.datetime, days_count: int,
 
 def render_codex(since: datetime.datetime, offline: bool = False):
     title = "CodeX (OpenAI GPT-5)"
-    print(f"\n{SEP}")
-    print(f"{title.center(52)}")
+    print(f"\n{_DIM}{SEP}{_RST}")
+    print(f"{_BOLD}{title.center(52)}{_RST}")
     print()
 
     ts, rl, source, fallback_reason = current_codex_rate_limits(offline=offline)
@@ -608,14 +655,14 @@ def render_codex(since: datetime.datetime, offline: bool = False):
 
     ts_local = ts.astimezone(TZ_LOCAL)
     source_label = t("实时", "live") if source == "live" else t("本地快照", "snapshot")
-    print(f"  {t('数据时间', 'Data time')}: {ts_local.strftime('%m-%d %H:%M')} CST  ({source_label})")
+    print(f"  {_DIM}{t('数据时间', 'Data time')}: {fmt_dt(ts_local)}  ({source_label}){_RST}")
     if source == "live":
-        print(f"  {t('数据来源', 'Source')}: codex app-server WebSocket")
+        print(f"  {_DIM}{t('数据来源', 'Source')}: codex app-server WebSocket{_RST}")
     else:
-        print(f"  {t('数据来源', 'Source')}: {t('本地快照', 'local snapshot')} (~/.codex/sessions/)")
+        print(f"  {_DIM}{t('数据来源', 'Source')}: {t('本地快照', 'local snapshot')} (~/.codex/sessions/){_RST}")
     if fallback_reason and source == "snapshot":
         print(f"  {t('实时读取失败', 'Live fetch failed')}: {fallback_reason}")
-    print(f"  {t('套餐', 'Plan')}: {rl.get('plan_type', '?').upper()}")
+    print(f"  {t('套餐', 'Plan')}: {_BOLD}{rl.get('plan_type', '?').upper()}{_RST}")
     print()
 
     secondary = rl.get("secondary") or {}
@@ -635,9 +682,10 @@ def render_codex(since: datetime.datetime, offline: bool = False):
     else:
         stale_note = ""
     p_label = t("5小时滚动窗", "5-hour window")
-    print(f"  {p_label}  {bar(p_remaining)}  {t(f'剩余 {p_remaining:.0f}%  (已用 {p_pct:.0f}%)', f'left {p_remaining:.0f}%  (used {p_pct:.0f}%)')}{stale_note}")
+    p_r_str = f"{_bc(p_remaining)}{_BOLD}{p_remaining:.0f}%{_RST}"
+    print(f"  {p_label}  {_colored_bar(p_remaining)}  {t(f'剩余 {p_r_str}  {_DIM}(已用 {p_pct:.0f}%){_RST}', f'left {p_r_str}  {_DIM}(used {p_pct:.0f}%){_RST}')}{stale_note}")
     if p_reset and not p_stale:
-        print(f"  {t('重置时间', 'Resets at')}: {p_reset.strftime('%m-%d %H:%M')} CST")
+        print(f"  {_DIM}{t('重置时间', 'Resets at')}: {fmt_reset_dt(p_reset)}{_RST}")
     print()
 
     # 7-day window
@@ -650,9 +698,10 @@ def render_codex(since: datetime.datetime, offline: bool = False):
         w_label = t(f"{days}天滚动窗  ", f"{days}-day window ")
     else:
         w_label = t("周额度    ", "Weekly quota")
-    print(f"  {w_label}  {bar(w_remaining)}  {t(f'剩余 {w_remaining:.0f}%  (已用 {w_pct:.0f}%)', f'left {w_remaining:.0f}%  (used {w_pct:.0f}%)')}")
+    w_r_str = f"{_bc(w_remaining)}{_BOLD}{w_remaining:.0f}%{_RST}"
+    print(f"  {w_label}  {_colored_bar(w_remaining)}  {t(f'剩余 {w_r_str}  {_DIM}(已用 {w_pct:.0f}%){_RST}', f'left {w_r_str}  {_DIM}(used {w_pct:.0f}%){_RST}')}")
     if w_reset:
-        print(f"  {t('重置时间', 'Resets at')}: {w_reset.strftime('%m-%d %H:%M')} CST")
+        print(f"  {_DIM}{t('重置时间', 'Resets at')}: {fmt_reset_dt(w_reset)}{_RST}")
 
     # remaining quota estimate
     if w_pct and w_reset:
@@ -665,11 +714,11 @@ def render_codex(since: datetime.datetime, offline: bool = False):
             rate_per_hour = w_pct / (elapsed_since_reset.total_seconds() / 3600)
             if rate_per_hour > 0:
                 hours_left = remaining_pct / rate_per_hour
-                print(f"\n  📊 {t(f'按当前速率 ({rate_per_hour:.1f}%/小时)，剩余 {remaining_pct:.0f}% 约可用 {hours_left:.0f} 小时', f'At current rate ({rate_per_hour:.1f}%/hr), {remaining_pct:.0f}% left ≈ {hours_left:.0f} hrs')}")
+                print(f"\n  📊 {_DIM}{t(f'按当前速率 ({rate_per_hour:.1f}%/小时)，剩余 {remaining_pct:.0f}% 约可用', f'At current rate ({rate_per_hour:.1f}%/hr), {remaining_pct:.0f}% left ≈')}{_RST} {_BOLD}{hours_left:.0f} {t('小时', 'hrs')}{_RST}")
 
 
 def render_summary():
-    print(f"\n{SEP}\n")
+    print(f"\n{_DIM}{SEP}{_RST}\n")
 
 
 # ── 主入口 ────────────────────────────────────────────────────────────────────
@@ -696,6 +745,12 @@ def main():
     else:
         since = now_utc - datetime.timedelta(days=args.days)
         days_count = args.days
+
+    now_local = datetime.datetime.now(TZ_LOCAL)
+    _wd_zh = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"]
+    _wd_en = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+    wd_now = _wd_zh[now_local.weekday()] if LANG == "zh" else _wd_en[now_local.weekday()]
+    print(f"\n{_DIM}{t('查询时间', 'Queried at')}: {wd_now} {now_local.strftime('%m-%d %H:%M')} {TZ_ABBR}{_RST}")
 
     claude_totals = collect_claude(since)
 
