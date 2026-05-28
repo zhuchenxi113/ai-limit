@@ -24,6 +24,7 @@ import time
 
 CLAUDE_BASE = pathlib.Path.home() / ".claude" / "projects"
 CODEX_BASE = pathlib.Path.home() / ".codex" / "sessions"
+_CODEX_WINDOW_CACHE = pathlib.Path.home() / ".codex_window_cache"
 TZ_LOCAL = datetime.datetime.now().astimezone().tzinfo
 TZ_ABBR  = datetime.datetime.now().astimezone().strftime('%Z')
 
@@ -444,11 +445,39 @@ def _recv_exact(s: socket.socket, n: int) -> bytes:
     return data
 
 
+def _load_window_cache():
+    """读取上次 live 查询缓存的窗口到期时间（Unix 秒），失败返回 None"""
+    try:
+        return float(_CODEX_WINDOW_CACHE.read_text().strip())
+    except (FileNotFoundError, ValueError, OSError):
+        return None
+
+
+def _save_window_cache(resets_at_unix):
+    """缓存最新的窗口到期时间"""
+    try:
+        _CODEX_WINDOW_CACHE.write_text(str(resets_at_unix))
+    except OSError:
+        pass
+
+
 def current_codex_rate_limits(offline: bool = False):
     """返回 (timestamp, rate_limits_dict, source_label, fallback_reason)"""
     if not offline:
+        # 检查上次 live 查询缓存的窗口到期时间
+        # 若窗口已到期，不启动 app-server，避免 initialize 调用触发新窗口
+        cached_expiry = _load_window_cache()
+        now_unix = datetime.datetime.now(datetime.timezone.utc).timestamp()
+        if cached_expiry is not None and cached_expiry <= now_unix:
+            ts, rl = latest_codex_rate_limits()
+            return ts, rl, "snapshot", "window_expired"
+
         try:
             ts, rl = live_codex_rate_limits()
+            # 成功后更新缓存
+            resets_at = (rl.get("primary") or {}).get("resets_at")
+            if resets_at:
+                _save_window_cache(float(resets_at))
             return ts, rl, "live", None
         except (CodexRemoteError, OSError, subprocess.SubprocessError) as e:
             fallback_reason = str(e) or e.__class__.__name__
