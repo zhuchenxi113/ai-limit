@@ -25,6 +25,7 @@ import time
 CLAUDE_BASE = pathlib.Path.home() / ".claude" / "projects"
 CODEX_BASE = pathlib.Path.home() / ".codex" / "sessions"
 _CODEX_WINDOW_CACHE = pathlib.Path.home() / ".codex_window_cache"
+_CODEX_WINDOW_MANAGED = pathlib.Path.home() / ".codex_window_managed"
 TZ_LOCAL = datetime.datetime.now().astimezone().tzinfo
 TZ_ABBR  = datetime.datetime.now().astimezone().strftime('%Z')
 
@@ -464,13 +465,14 @@ def _save_window_cache(resets_at_unix):
 def current_codex_rate_limits(offline: bool = False):
     """返回 (timestamp, rate_limits_dict, source_label, fallback_reason)"""
     if not offline:
-        # 检查上次 live 查询缓存的窗口到期时间
-        # 若窗口已到期，不启动 app-server，避免 initialize 调用触发新窗口
-        cached_expiry = _load_window_cache()
-        now_unix = datetime.datetime.now(datetime.timezone.utc).timestamp()
-        if cached_expiry is not None and cached_expiry <= now_unix:
-            ts, rl = latest_codex_rate_limits()
-            return ts, rl, "snapshot", "window_expired"
+        # 被动模式：仅当 limit-cd 等外部工具管理窗口时启用（标记文件存在）
+        # 避免 initialize 调用在窗口到期后意外触发新窗口
+        if _CODEX_WINDOW_MANAGED.exists():
+            cached_expiry = _load_window_cache()
+            now_unix = datetime.datetime.now(datetime.timezone.utc).timestamp()
+            if cached_expiry is not None and cached_expiry <= now_unix:
+                ts, rl = latest_codex_rate_limits()
+                return ts, rl, "snapshot", "window_expired"
 
         try:
             ts, rl = live_codex_rate_limits()
