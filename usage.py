@@ -119,9 +119,9 @@ def fmt_reset_dt(dt: datetime.datetime) -> str:
     today = datetime.datetime.now(TZ_LOCAL).date()
     next_week = dt.date().isocalendar()[:2] > today.isocalendar()[:2]
     if LANG == "zh":
-        wd = f"下周{_bare_zh[dt.weekday()]}" if next_week else f"周{_bare_zh[dt.weekday()]}"
+        wd = f"下周{_bare_zh[dt.weekday()]}" if next_week else f"周{_bare_zh[dt.weekday()]}  "
     else:
-        wd = f"next {_bare_en[dt.weekday()]}" if next_week else _bare_en[dt.weekday()]
+        wd = f"next {_bare_en[dt.weekday()]}" if next_week else f"{_bare_en[dt.weekday()]:<8}"
     return f"{wd} {dt.strftime('%m-%d %H:%M')} {TZ_ABBR}"
 
 
