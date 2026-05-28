@@ -118,7 +118,7 @@ Quota reading requires an active browser session on claude.ai. Falls back gracef
 
 Prefers live data via the official Codex CLI. Falls back to the latest local snapshot with a staleness timestamp if the app-server is unavailable.
 
-> **Side effect:** Querying live Codex quota starts a `codex app-server` process and sends an `initialize` call, which OpenAI counts as a session start. This will trigger a new 5-hour rolling window if the current one has already expired. This is a protocol-level constraint — `account/rateLimits/read` requires `initialize` and cannot be called without it.
+> **Known behavior (Codex protocol limitation):** Querying live Codex quota requires starting `codex app-server` and sending an `initialize` call as mandated by the Codex CLI protocol — `account/rateLimits/read` cannot be called without it. OpenAI counts this initialization as a session start, which triggers a new 5-hour rolling window if the current one has already expired. This is not a design choice of ai-limit; it is an inherent consequence of how the Codex CLI exposes its data. No workaround exists at the tool level.
 >
 > If you want to check quota without triggering a new window, use `--offline`.
 

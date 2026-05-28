@@ -118,7 +118,7 @@ AI_LIMIT_LANG=zh ai-limit   # 强制中文
 
 CodeX 优先通过官方 CLI 实时获取，失败时回退到本地快照并标注数据时间。
 
-> **副作用说明：** 查询 CodeX 实时额度时，工具会启动 `codex app-server` 并发送 `initialize` 调用，OpenAI 会将其计为一次会话开始，从而触发新的 5 小时滚动窗口（若当前窗口已到期）。这是协议层面的限制——`account/rateLimits/read` 必须在 `initialize` 之后调用，无法绕过。
+> **已知行为（CodeX 协议限制）：** 查询 CodeX 实时额度必须启动 `codex app-server` 并发送 `initialize` 调用，这是 CodeX CLI 协议的强制要求——`account/rateLimits/read` 必须在 `initialize` 之后才能调用，没有任何绕过方式。OpenAI 会将此初始化计为一次会话开始，若当前 5 小时窗口已到期，则会触发新窗口计时。这不是 ai-limit 的设计行为，而是 CodeX CLI 数据接口的固有机制，工具层面无法规避。
 >
 > 如果只想查看额度而不触发新窗口，请使用 `--offline` 参数。
 
