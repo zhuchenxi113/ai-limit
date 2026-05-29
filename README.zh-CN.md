@@ -88,7 +88,6 @@ source ~/.zshrc
 ai-limit              # 最近 7 天（默认）
 ai-limit --days 1     # 今天
 ai-limit --all        # 全部历史
-ai-limit --offline    # 不启动 CodeX app-server，只读本地快照
 ai-limit --detail     # 展示每个模型的详细 token 统计
 ```
 
@@ -123,8 +122,6 @@ AI_LIMIT_LANG=zh ai-limit   # 强制中文
 浏览器路径（路径 1）复用 chatgpt.com 网页分析端点，与 dashboard 同一通道，覆盖 **Cloud + CLI 合并用量**，只读不触发窗口。这是默认推荐路径。
 
 > **⚠️ 副作用警告（CodeX 协议限制）：** 当路径 1 失败（未登录 chatgpt.com / cookie 过期 / 网络异常），ai-limit 会自动 fallback 到 `codex app-server`。这条路径需要发送 `initialize` 调用，OpenAI 会将其计为一次会话开始——若当前 5 小时窗口已到期，**会触发新的 5 小时冷却窗口计时**。这是 CodeX CLI 数据接口的固有机制，工具层面无法规避。
->
-> 如果只想查看本地数据而完全不联网，请使用 `--offline` 参数。
 
 ## 说明
 

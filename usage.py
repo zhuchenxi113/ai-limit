@@ -597,7 +597,7 @@ def _save_window_cache(resets_at_unix):
         pass
 
 
-def current_codex_rate_limits(offline: bool = False):
+def current_codex_rate_limits():
     """返回 (timestamp, rate_limits_dict, source_label, fallback_reason)
 
     数据源优先级：
@@ -605,10 +605,6 @@ def current_codex_rate_limits(offline: bool = False):
       2. app-server live（注意：会触发新的 Codex 5 小时冷却窗口，见 README）
       3. 本地快照（~/.codex/sessions/）
     """
-    if offline:
-        ts, rl = latest_codex_rate_limits()
-        return ts, rl, "snapshot", "--offline"
-
     reasons = []
 
     # 1. web 优先：不触发窗口，安全
@@ -821,13 +817,13 @@ def render_claude(totals: dict, since: datetime.datetime, days_count: int,
         print(f"\n  ⚠️  {t('Claude 周额度百分比本地不可得', 'Claude quota unavailable locally')}  →  {CLAUDE_USAGE_URL}  ({t('Cmd+双击打开', 'Cmd+double-click to open')})")
 
 
-def render_codex(since: datetime.datetime, offline: bool = False):
+def render_codex(since: datetime.datetime):
     title = "CodeX (OpenAI GPT-5)"
     print(f"\n{_DIM}{SEP}{_RST}")
     print(f"{_BOLD}{title.center(52)}{_RST}")
     print()
 
-    ts, rl, source, fallback_reason = current_codex_rate_limits(offline=offline)
+    ts, rl, source, fallback_reason = current_codex_rate_limits()
     if not rl:
         if fallback_reason:
             print(f"  {t('实时读取失败', 'Live fetch failed')}: {fallback_reason}")
@@ -936,8 +932,6 @@ def main():
                         help=t("统计最近 N 天（默认 7）", "show last N days (default: 7)"))
     parser.add_argument("--all", action="store_true",
                         help=t("统计全部历史（忽略 --days）", "show all history (overrides --days)"))
-    parser.add_argument("--offline", action="store_true",
-                        help=t("不调用 Codex app-server，只读取本地快照", "skip Codex app-server, use local snapshot only"))
     parser.add_argument("--detail", action="store_true",
                         help=t("展示每个模型的详细 token 统计", "show per-model token breakdown"))
     args = parser.parse_args()
@@ -966,7 +960,7 @@ def main():
         web_error = str(e)
 
     render_claude(claude_totals, since, days_count, web_data=web_data, web_error=web_error, detail=args.detail)
-    render_codex(since, offline=args.offline)
+    render_codex(since)
     render_summary()
 
 

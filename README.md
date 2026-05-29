@@ -88,7 +88,6 @@ source ~/.zshrc
 ai-limit              # Last 7 days (default)
 ai-limit --days 1     # Today only
 ai-limit --all        # Full history
-ai-limit --offline    # Skip Codex app-server, use local snapshot only
 ai-limit --detail     # Show per-model token breakdown
 ```
 
@@ -123,8 +122,6 @@ Data sources are tried in priority order:
 The browser path (1) reuses the same analytics endpoint that powers the chatgpt.com dashboard. It returns **merged Cloud + CLI usage**, is read-only, and does not trigger a new window. This is the recommended default.
 
 > **⚠️ Side-effect warning (Codex protocol limitation):** When path 1 fails (not signed in to chatgpt.com / cookies expired / network issue), ai-limit falls back to `codex app-server`. That path sends an `initialize` call, which OpenAI counts as a session start — if the current 5-hour window has already expired, **this triggers a new 5-hour rolling window**. This is an inherent consequence of how the Codex CLI exposes its data; no workaround exists at the tool level.
->
-> If you want fully-offline behavior with no network calls, use `--offline`.
 
 ## Notes
 
