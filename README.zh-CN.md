@@ -31,8 +31,8 @@
 ────────────────────────────────────────────────────
                 CodeX (OpenAI GPT-5)                
 
-  数据时间: 05-26 15:24 CST  (实时)
-  数据来源: codex app-server WebSocket
+  数据时间: 05-26 15:24 CST  (实时(网页))
+  数据来源: chatgpt.com usage API  (浏览器登录态)
   套餐: PLUS
 
   5小时滚动窗  ████████░░░░░░░░░░░░  剩余 39%  (已用 61%)
@@ -50,8 +50,9 @@
 
 - macOS
 - Python 3.8+
-- Chrome 或 Firefox 已登录 [claude.ai](https://claude.ai)（用于读取额度）
-- [CodeX CLI](https://developers.openai.com/codex/cli) 已安装并登录（用于读取 CodeX 额度）
+- Chrome 或 Firefox 已登录 [claude.ai](https://claude.ai)（用于读取 Claude 额度）
+- Chrome 或 Firefox 已登录 [chatgpt.com](https://chatgpt.com)（用于读取 CodeX 额度，推荐路径）
+- 可选：[CodeX CLI](https://developers.openai.com/codex/cli) 已安装并登录（作为浏览器 cookie 失效时的兜底路径）
 
 ## 安装
 
@@ -111,16 +112,19 @@ AI_LIMIT_LANG=zh ai-limit   # 强制中文
 
 ### CodeX
 
-| 数据 | 来源 |
-|------|------|
-| 实时剩余额度 | `codex app-server` WebSocket → `account/rateLimits/read` |
-| 本地回退 | `~/.codex/sessions/**/*.jsonl` |
+数据源按优先级依次尝试：
 
-CodeX 优先通过官方 CLI 实时获取，失败时回退到本地快照并标注数据时间。
+| 优先级 | 数据 | 来源 | 是否触发 5h 窗口 |
+|------|------|------|------|
+| 1 | 实时剩余额度 | 浏览器 Cookie → `chatgpt.com/backend-api/codex/usage` | ❌ 不触发 |
+| 2 | 实时剩余额度 | `codex app-server` WebSocket → `account/rateLimits/read` | ⚠️ **会触发** |
+| 3 | 本地回退 | `~/.codex/sessions/**/*.jsonl` | ❌ 不触发 |
 
-> **已知行为（CodeX 协议限制）：** 查询 CodeX 实时额度必须启动 `codex app-server` 并发送 `initialize` 调用，这是 CodeX CLI 协议的强制要求——`account/rateLimits/read` 必须在 `initialize` 之后才能调用，没有任何绕过方式。OpenAI 会将此初始化计为一次会话开始，若当前 5 小时窗口已到期，则会触发新窗口计时。这不是 ai-limit 的设计行为，而是 CodeX CLI 数据接口的固有机制，工具层面无法规避。
+浏览器路径（路径 1）复用 chatgpt.com 网页分析端点，与 dashboard 同一通道，覆盖 **Cloud + CLI 合并用量**，只读不触发窗口。这是默认推荐路径。
+
+> **⚠️ 副作用警告（CodeX 协议限制）：** 当路径 1 失败（未登录 chatgpt.com / cookie 过期 / 网络异常），ai-limit 会自动 fallback 到 `codex app-server`。这条路径需要发送 `initialize` 调用，OpenAI 会将其计为一次会话开始——若当前 5 小时窗口已到期，**会触发新的 5 小时冷却窗口计时**。这是 CodeX CLI 数据接口的固有机制，工具层面无法规避。
 >
-> 如果只想查看额度而不触发新窗口，请使用 `--offline` 参数。
+> 如果只想查看本地数据而完全不联网，请使用 `--offline` 参数。
 
 ## 说明
 

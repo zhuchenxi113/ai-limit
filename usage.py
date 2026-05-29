@@ -25,7 +25,6 @@ import time
 CLAUDE_BASE = pathlib.Path.home() / ".claude" / "projects"
 CODEX_BASE = pathlib.Path.home() / ".codex" / "sessions"
 _CODEX_WINDOW_CACHE = pathlib.Path.home() / ".codex_window_cache"
-_CODEX_WINDOW_MANAGED = pathlib.Path.home() / ".codex_window_managed"
 TZ_LOCAL = datetime.datetime.now().astimezone().tzinfo
 TZ_ABBR  = datetime.datetime.now().astimezone().strftime('%Z')
 
@@ -480,16 +479,30 @@ _CHATGPT_UA = (
 )
 
 
+def _chatgpt_headers(cookie_header: str, *, referer: str = "https://chatgpt.com/codex/cloud/settings/analytics", bearer: str = None) -> dict:
+    # 包含 Sec-Fetch-* / Accept-Language / Referer，避免 Cloudflare 反爬 403
+    h = {
+        "Cookie": cookie_header,
+        "Accept": "application/json",
+        "Accept-Language": "en-US,en;q=0.9",
+        "User-Agent": _CHATGPT_UA,
+        "Referer": referer,
+        "Origin": "https://chatgpt.com",
+        "Sec-Fetch-Dest": "empty",
+        "Sec-Fetch-Mode": "cors",
+        "Sec-Fetch-Site": "same-origin",
+    }
+    if bearer:
+        h["Authorization"] = f"Bearer {bearer}"
+    return h
+
+
 def _get_chatgpt_access_token(cookie_header: str, timeout: int) -> str:
     import urllib.request
     import urllib.error
     req = urllib.request.Request(
         "https://chatgpt.com/api/auth/session",
-        headers={
-            "Cookie": cookie_header,
-            "Accept": "application/json",
-            "User-Agent": _CHATGPT_UA,
-        },
+        headers=_chatgpt_headers(cookie_header),
     )
     try:
         with urllib.request.urlopen(req, timeout=timeout) as r:
@@ -552,12 +565,7 @@ def live_codex_web_usage(timeout: int = CLAUDE_WEB_TIMEOUT_SEC):
     token = _get_chatgpt_access_token(cookie_header, timeout)
     req = urllib.request.Request(
         "https://chatgpt.com/backend-api/codex/usage",
-        headers={
-            "Cookie": cookie_header,
-            "Authorization": f"Bearer {token}",
-            "Accept": "application/json",
-            "User-Agent": _CHATGPT_UA,
-        },
+        headers=_chatgpt_headers(cookie_header, bearer=token),
     )
     try:
         with urllib.request.urlopen(req, timeout=timeout) as r:
@@ -593,8 +601,8 @@ def current_codex_rate_limits(offline: bool = False):
     """返回 (timestamp, rate_limits_dict, source_label, fallback_reason)
 
     数据源优先级：
-      1. app-server live（除非被动模式 + 窗口已过期，避免触发新 5h 窗口）
-      2. chatgpt.com web 接口（只读，不触发窗口；覆盖 Cloud + CLI 合并用量）
+      1. chatgpt.com web 接口（只读，不触发窗口；覆盖 Cloud + CLI 合并用量）
+      2. app-server live（注意：会触发新的 Codex 5 小时冷却窗口，见 README）
       3. 本地快照（~/.codex/sessions/）
     """
     if offline:
@@ -603,29 +611,7 @@ def current_codex_rate_limits(offline: bool = False):
 
     reasons = []
 
-    # 被动模式：仅当 limit-cd 等外部工具管理窗口时启用（标记文件存在）
-    # 避免 initialize 调用在窗口到期后意外触发新窗口
-    skip_app_server = False
-    if _CODEX_WINDOW_MANAGED.exists():
-        cached_expiry = _load_window_cache()
-        now_unix = datetime.datetime.now(datetime.timezone.utc).timestamp()
-        if cached_expiry is not None and cached_expiry <= now_unix:
-            skip_app_server = True
-            reasons.append("app-server: window_expired")
-
-    if not skip_app_server:
-        try:
-            ts, rl = live_codex_rate_limits()
-            resets_at = (rl.get("primary") or {}).get("resets_at")
-            if resets_at:
-                _save_window_cache(float(resets_at))
-            return ts, rl, "live", None
-        except (CodexRemoteError, OSError, subprocess.SubprocessError) as e:
-            reasons.append(f"app-server: {e or e.__class__.__name__}")
-        except Exception as e:
-            reasons.append(f"app-server: {e.__class__.__name__}: {e}")
-
-    # chatgpt.com web 接口（不触发窗口）
+    # 1. web 优先：不触发窗口，安全
     try:
         ts, rl = live_codex_web_usage()
         resets_at = (rl.get("primary") or {}).get("resets_at")
@@ -637,6 +623,19 @@ def current_codex_rate_limits(offline: bool = False):
     except Exception as e:
         reasons.append(f"web: {e.__class__.__name__}: {e}")
 
+    # 2. app-server 兜底（会触发 5h 窗口，详见 README 副作用说明）
+    try:
+        ts, rl = live_codex_rate_limits()
+        resets_at = (rl.get("primary") or {}).get("resets_at")
+        if resets_at:
+            _save_window_cache(float(resets_at))
+        return ts, rl, "live", None
+    except (CodexRemoteError, OSError, subprocess.SubprocessError) as e:
+        reasons.append(f"app-server: {e or e.__class__.__name__}")
+    except Exception as e:
+        reasons.append(f"app-server: {e.__class__.__name__}: {e}")
+
+    # 3. 本地快照
     ts, rl = latest_codex_rate_limits()
     return ts, rl, "snapshot", " → ".join(reasons) if reasons else None
 

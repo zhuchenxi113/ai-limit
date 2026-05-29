@@ -31,8 +31,8 @@ A lightweight CLI tool to monitor real-time **Claude Code** and **Codex** usage 
 ────────────────────────────────────────────────────
                 CodeX (OpenAI GPT-5)                
 
-  Data time: 05-26 15:24 CST  (live)
-  Source: codex app-server WebSocket
+  Data time: 05-26 15:24 CST  (live (web))
+  Source: chatgpt.com usage API  (browser session)
   Plan: PLUS
 
   5-hour window  ████████░░░░░░░░░░░░  left 39%  (used 61%)
@@ -51,7 +51,8 @@ A lightweight CLI tool to monitor real-time **Claude Code** and **Codex** usage 
 - macOS
 - Python 3.8+
 - Chrome or Firefox signed in to [claude.ai](https://claude.ai) (for Claude quota)
-- [Codex CLI](https://developers.openai.com/codex/cli) installed and signed in (for Codex quota)
+- Chrome or Firefox signed in to [chatgpt.com](https://chatgpt.com) (recommended path for Codex quota)
+- Optional: [Codex CLI](https://developers.openai.com/codex/cli) installed and signed in (fallback path when browser cookies are unavailable)
 
 ## Installation
 
@@ -111,16 +112,19 @@ Quota reading requires an active browser session on claude.ai. Falls back gracef
 
 ### Codex
 
-| Data | Source |
-|------|--------|
-| Live quota | `codex app-server` WebSocket → `account/rateLimits/read` |
-| Local fallback | `~/.codex/sessions/**/*.jsonl` |
+Data sources are tried in priority order:
 
-Prefers live data via the official Codex CLI. Falls back to the latest local snapshot with a staleness timestamp if the app-server is unavailable.
+| Priority | Data | Source | Triggers 5h window? |
+|------|------|--------|------|
+| 1 | Live quota | Browser cookie → `chatgpt.com/backend-api/codex/usage` | ❌ No |
+| 2 | Live quota | `codex app-server` WebSocket → `account/rateLimits/read` | ⚠️ **Yes** |
+| 3 | Local fallback | `~/.codex/sessions/**/*.jsonl` | ❌ No |
 
-> **Known behavior (Codex protocol limitation):** Querying live Codex quota requires starting `codex app-server` and sending an `initialize` call as mandated by the Codex CLI protocol — `account/rateLimits/read` cannot be called without it. OpenAI counts this initialization as a session start, which triggers a new 5-hour rolling window if the current one has already expired. This is not a design choice of ai-limit; it is an inherent consequence of how the Codex CLI exposes its data. No workaround exists at the tool level.
+The browser path (1) reuses the same analytics endpoint that powers the chatgpt.com dashboard. It returns **merged Cloud + CLI usage**, is read-only, and does not trigger a new window. This is the recommended default.
+
+> **⚠️ Side-effect warning (Codex protocol limitation):** When path 1 fails (not signed in to chatgpt.com / cookies expired / network issue), ai-limit falls back to `codex app-server`. That path sends an `initialize` call, which OpenAI counts as a session start — if the current 5-hour window has already expired, **this triggers a new 5-hour rolling window**. This is an inherent consequence of how the Codex CLI exposes its data; no workaround exists at the tool level.
 >
-> If you want to check quota without triggering a new window, use `--offline`.
+> If you want fully-offline behavior with no network calls, use `--offline`.
 
 ## Notes
 
