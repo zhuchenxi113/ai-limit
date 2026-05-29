@@ -446,6 +446,133 @@ def _recv_exact(s: socket.socket, n: int) -> bytes:
     return data
 
 
+class CodexWebError(Exception):
+    pass
+
+
+def _load_chatgpt_cookies():
+    try:
+        import browser_cookie3
+    except ImportError:
+        raise CodexWebError(t(
+            "未安装 browser_cookie3，请先运行: pip install browser-cookie3",
+            "browser_cookie3 not installed, run: pip install browser-cookie3",
+        ))
+    errs = []
+    for name, loader in [("Chrome", browser_cookie3.chrome), ("Firefox", browser_cookie3.firefox)]:
+        try:
+            jar = loader(domain_name=".chatgpt.com")
+            cookies = [(c.name, c.value) for c in jar]
+            if cookies:
+                return cookies
+        except Exception as e:
+            errs.append(f"{name}: {e}")
+    detail = f" ({'; '.join(errs)})" if errs else ""
+    raise CodexWebError(t(
+        f"无法读取 chatgpt.com cookie{detail}，请先在浏览器登录 chatgpt.com",
+        f"cannot read chatgpt.com cookies{detail}, please log in to chatgpt.com in your browser",
+    ))
+
+
+_CHATGPT_UA = (
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+    "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+)
+
+
+def _get_chatgpt_access_token(cookie_header: str, timeout: int) -> str:
+    import urllib.request
+    import urllib.error
+    req = urllib.request.Request(
+        "https://chatgpt.com/api/auth/session",
+        headers={
+            "Cookie": cookie_header,
+            "Accept": "application/json",
+            "User-Agent": _CHATGPT_UA,
+        },
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            body = r.read()
+    except urllib.error.HTTPError as e:
+        raise CodexWebError(f"session HTTP {e.code}")
+    except Exception as e:
+        raise CodexWebError(f"session: {e}")
+    try:
+        data = json.loads(body)
+    except json.JSONDecodeError:
+        raise CodexWebError("session: non-JSON response")
+    token = data.get("accessToken")
+    if not token:
+        raise CodexWebError(t(
+            "请先在浏览器登录 chatgpt.com",
+            "please log in to chatgpt.com in your browser",
+        ))
+    return token
+
+
+def _normalize_web_rate_limits(data: dict) -> dict:
+    rl = data.get("rate_limit") or {}
+
+    def win(w):
+        if not w:
+            return None
+        wsec = w.get("limit_window_seconds")
+        return {
+            "used_percent": w.get("used_percent", 0),
+            "window_minutes": wsec // 60 if wsec else None,
+            "resets_at": w.get("reset_at"),
+        }
+
+    plan = data.get("plan_type")
+    return {
+        "limit_id": None,
+        "limit_name": None,
+        "primary": win(rl.get("primary_window")),
+        "secondary": win(rl.get("secondary_window")),
+        "credits": data.get("credits"),
+        "plan_type": plan,
+        "rate_limit_reached_type": (rl or {}).get("rate_limit_reached_type"),
+    }
+
+
+def live_codex_web_usage(timeout: int = CLAUDE_WEB_TIMEOUT_SEC):
+    """
+    通过浏览器 cookie 读取 chatgpt.com 的 Codex usage 接口。
+
+    返回 (timestamp, normalized_rate_limits_dict)。
+
+    与 app-server 不同，此端点为只读分析接口，不会触发新的 5 小时窗口；
+    且数据覆盖 Cloud + CLI 真实合并用量。失败抛 CodexWebError。
+    """
+    import urllib.request
+    import urllib.error
+    cookies = _load_chatgpt_cookies()
+    cookie_header = "; ".join(f"{n}={v}" for n, v in cookies)
+    token = _get_chatgpt_access_token(cookie_header, timeout)
+    req = urllib.request.Request(
+        "https://chatgpt.com/backend-api/codex/usage",
+        headers={
+            "Cookie": cookie_header,
+            "Authorization": f"Bearer {token}",
+            "Accept": "application/json",
+            "User-Agent": _CHATGPT_UA,
+        },
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            body = r.read()
+    except urllib.error.HTTPError as e:
+        raise CodexWebError(f"HTTP {e.code}")
+    except Exception as e:
+        raise CodexWebError(str(e))
+    try:
+        data = json.loads(body)
+    except json.JSONDecodeError:
+        raise CodexWebError("non-JSON response")
+    return datetime.datetime.now(datetime.timezone.utc), _normalize_web_rate_limits(data)
+
+
 def _load_window_cache():
     """读取上次 live 查询缓存的窗口到期时间（Unix 秒），失败返回 None"""
     try:
@@ -463,33 +590,55 @@ def _save_window_cache(resets_at_unix):
 
 
 def current_codex_rate_limits(offline: bool = False):
-    """返回 (timestamp, rate_limits_dict, source_label, fallback_reason)"""
-    if not offline:
-        # 被动模式：仅当 limit-cd 等外部工具管理窗口时启用（标记文件存在）
-        # 避免 initialize 调用在窗口到期后意外触发新窗口
-        if _CODEX_WINDOW_MANAGED.exists():
-            cached_expiry = _load_window_cache()
-            now_unix = datetime.datetime.now(datetime.timezone.utc).timestamp()
-            if cached_expiry is not None and cached_expiry <= now_unix:
-                ts, rl = latest_codex_rate_limits()
-                return ts, rl, "snapshot", "window_expired"
+    """返回 (timestamp, rate_limits_dict, source_label, fallback_reason)
 
+    数据源优先级：
+      1. app-server live（除非被动模式 + 窗口已过期，避免触发新 5h 窗口）
+      2. chatgpt.com web 接口（只读，不触发窗口；覆盖 Cloud + CLI 合并用量）
+      3. 本地快照（~/.codex/sessions/）
+    """
+    if offline:
+        ts, rl = latest_codex_rate_limits()
+        return ts, rl, "snapshot", "--offline"
+
+    reasons = []
+
+    # 被动模式：仅当 limit-cd 等外部工具管理窗口时启用（标记文件存在）
+    # 避免 initialize 调用在窗口到期后意外触发新窗口
+    skip_app_server = False
+    if _CODEX_WINDOW_MANAGED.exists():
+        cached_expiry = _load_window_cache()
+        now_unix = datetime.datetime.now(datetime.timezone.utc).timestamp()
+        if cached_expiry is not None and cached_expiry <= now_unix:
+            skip_app_server = True
+            reasons.append("app-server: window_expired")
+
+    if not skip_app_server:
         try:
             ts, rl = live_codex_rate_limits()
-            # 成功后更新缓存
             resets_at = (rl.get("primary") or {}).get("resets_at")
             if resets_at:
                 _save_window_cache(float(resets_at))
             return ts, rl, "live", None
         except (CodexRemoteError, OSError, subprocess.SubprocessError) as e:
-            fallback_reason = str(e) or e.__class__.__name__
+            reasons.append(f"app-server: {e or e.__class__.__name__}")
         except Exception as e:
-            fallback_reason = f"{e.__class__.__name__}: {e}"
-    else:
-        fallback_reason = "--offline"
+            reasons.append(f"app-server: {e.__class__.__name__}: {e}")
+
+    # chatgpt.com web 接口（不触发窗口）
+    try:
+        ts, rl = live_codex_web_usage()
+        resets_at = (rl.get("primary") or {}).get("resets_at")
+        if resets_at:
+            _save_window_cache(float(resets_at))
+        return ts, rl, "web", None
+    except CodexWebError as e:
+        reasons.append(f"web: {e}")
+    except Exception as e:
+        reasons.append(f"web: {e.__class__.__name__}: {e}")
 
     ts, rl = latest_codex_rate_limits()
-    return ts, rl, "snapshot", fallback_reason
+    return ts, rl, "snapshot", " → ".join(reasons) if reasons else None
 
 
 def latest_codex_rate_limits():
@@ -681,42 +830,61 @@ def render_codex(since: datetime.datetime, offline: bool = False):
 
     ts, rl, source, fallback_reason = current_codex_rate_limits(offline=offline)
     if not rl:
-        print(t("  （未找到 CodeX 会话数据）", "  (no CodeX session data found)"))
+        if fallback_reason:
+            print(f"  {t('实时读取失败', 'Live fetch failed')}: {fallback_reason}")
+        print(t("  （未找到 CodeX 数据）", "  (no CodeX data found)"))
         return
 
+    now_local = datetime.datetime.now(TZ_LOCAL)
     ts_local = ts.astimezone(TZ_LOCAL)
-    source_label = t("实时", "live") if source == "live" else t("本地快照", "snapshot")
-    print(f"  {_DIM}{t('数据时间', 'Data time')}: {fmt_dt(ts_local)}  ({source_label}){_RST}")
-    if source == "live":
-        print(f"  {_DIM}{t('数据来源', 'Source')}: codex app-server WebSocket{_RST}")
-    else:
-        print(f"  {_DIM}{t('数据来源', 'Source')}: {t('本地快照', 'local snapshot')} (~/.codex/sessions/){_RST}")
+
+    source_labels = {
+        "live": t("实时", "live"),
+        "web": t("实时(网页)", "live (web)"),
+        "snapshot": t("本地快照", "snapshot"),
+    }
+    source_details = {
+        "live": "codex app-server WebSocket",
+        "web": t("chatgpt.com usage API  (浏览器登录态)", "chatgpt.com usage API  (browser session)"),
+        "snapshot": t("本地快照", "local snapshot") + " (~/.codex/sessions/)",
+    }
+    print(f"  {_DIM}{t('数据时间', 'Data time')}: {fmt_dt(ts_local)}  ({source_labels[source]}){_RST}")
+    print(f"  {_DIM}{t('数据来源', 'Source')}: {source_details[source]}{_RST}")
     if fallback_reason and source == "snapshot":
         print(f"  {t('实时读取失败', 'Live fetch failed')}: {fallback_reason}")
-    print(f"  {t('套餐', 'Plan')}: {_BOLD}{rl.get('plan_type', '?').upper()}{_RST}")
+    plan = rl.get("plan_type") or "?"
+    print(f"  {t('套餐', 'Plan')}: {_BOLD}{plan.upper()}{_RST}")
     print()
 
     secondary = rl.get("secondary") or {}
     primary = rl.get("primary") or {}
+
+    data_age_min = (now_local - ts_local).total_seconds() / 60
 
     # 5-hour window
     p_pct = primary.get("used_percent", 0)
     p_remaining = remaining_percent(p_pct)
     p_reset = epoch_to_local(primary["resets_at"]) if primary.get("resets_at") else None
     p_min = primary.get("window_minutes", 300)
-    now_local = datetime.datetime.now(TZ_LOCAL)
-    data_age_min = (now_local - ts_local).total_seconds() / 60
-    p_stale = data_age_min > p_min
-    age_h = data_age_min / 60
-    if p_stale:
-        stale_note = f"  ⚠️ {t(f'{age_h:.0f}h 前的数据', f'data {age_h:.0f}h old')}  →  {CODEX_USAGE_URL}  ({t('Cmd+双击打开', 'Cmd+double-click to open')})"
-    else:
-        stale_note = ""
+    p_stale = source == "snapshot" and data_age_min > p_min
     p_label = t("5小时滚动窗", "5-hour window")
-    p_r_str = f"{_bc(p_remaining)}{_BOLD}{p_remaining:.0f}%{_RST}"
-    print(f"  {p_label}  {_colored_bar(p_remaining)}  {t(f'剩余 {p_r_str}  {_DIM}(已用 {p_pct:.0f}%){_RST}', f'left {p_r_str}  {_DIM}(used {p_pct:.0f}%){_RST}')}{stale_note}")
-    if p_reset and not p_stale:
-        print(f"  {_DIM}{t('重置时间', 'Resets at')}: {fmt_reset_dt(p_reset)}{_RST}")
+
+    if p_stale:
+        if p_reset and now_local >= p_reset:
+            # 快照过期且窗口重置时间已过；web/live 都失败 → 保守推断已重置
+            full_str = f"{_OK}{_BOLD}100%{_RST}"
+            print(f"  {p_label}  {_colored_bar(100)}  {t(f'剩余 {full_str}  {_DIM}(推断：CLI 无新记录，可能漏检 Cloud){_RST}', f'left {full_str}  {_DIM}(inferred: no new CLI usage; Cloud may be missed){_RST}')}")
+            print(f"  {_DIM}{t('重置时间', 'Reset at')}: {fmt_reset_dt(p_reset)}{_RST}")
+        elif p_reset:
+            print(f"  {p_label}  {_DIM}{t(f'快照已过期，预计 {fmt_reset_dt(p_reset)} 后恢复', f'snapshot expired, expected reset at {fmt_reset_dt(p_reset)}')}{_RST}")
+        else:
+            age_h = data_age_min / 60
+            print(f"  {p_label}  {_DIM}{t(f'快照已过期 ({age_h:.0f}h 前)', f'snapshot expired ({age_h:.0f}h ago)')}{_RST}  →  {CODEX_USAGE_URL}")
+    else:
+        p_r_str = f"{_bc(p_remaining)}{_BOLD}{p_remaining:.0f}%{_RST}"
+        print(f"  {p_label}  {_colored_bar(p_remaining)}  {t(f'剩余 {p_r_str}  {_DIM}(已用 {p_pct:.0f}%){_RST}', f'left {p_r_str}  {_DIM}(used {p_pct:.0f}%){_RST}')}")
+        if p_reset:
+            print(f"  {_DIM}{t('重置时间', 'Resets at')}: {fmt_reset_dt(p_reset)}{_RST}")
     print()
 
     # 7-day window
@@ -729,10 +897,17 @@ def render_codex(since: datetime.datetime, offline: bool = False):
         w_label = t(f"{days}天滚动窗  ", f"{days}-day window ")
     else:
         w_label = t("周额度    ", "Weekly quota")
+    w_stale = bool(source == "snapshot" and w_min and data_age_min > w_min)
     w_r_str = f"{_bc(w_remaining)}{_BOLD}{w_remaining:.0f}%{_RST}"
-    print(f"  {w_label}  {_colored_bar(w_remaining)}  {t(f'剩余 {w_r_str}  {_DIM}(已用 {w_pct:.0f}%){_RST}', f'left {w_r_str}  {_DIM}(used {w_pct:.0f}%){_RST}')}")
-    if w_reset:
-        print(f"  {_DIM}{t('重置时间', 'Resets at')}: {fmt_reset_dt(w_reset)}{_RST}")
+    if w_stale and w_reset and now_local >= w_reset:
+        full_str = f"{_OK}{_BOLD}100%{_RST}"
+        print(f"  {w_label}  {_colored_bar(100)}  {t(f'剩余 {full_str}  {_DIM}(推断：已重置){_RST}', f'left {full_str}  {_DIM}(inferred: reset){_RST}')}")
+        print(f"  {_DIM}{t('重置时间', 'Reset at')}: {fmt_reset_dt(w_reset)}{_RST}")
+    else:
+        age_note = f"  {_DIM}{t(f'{data_age_min/60:.0f}h 前快照', f'snapshot {data_age_min/60:.0f}h ago')}{_RST}" if p_stale else ""
+        print(f"  {w_label}  {_colored_bar(w_remaining)}  {t(f'剩余 {w_r_str}  {_DIM}(已用 {w_pct:.0f}%){_RST}', f'left {w_r_str}  {_DIM}(used {w_pct:.0f}%){_RST}')}{age_note}")
+        if w_reset:
+            print(f"  {_DIM}{t('重置时间', 'Resets at')}: {fmt_reset_dt(w_reset)}{_RST}")
 
     # remaining quota estimate
     if w_pct and w_reset:
