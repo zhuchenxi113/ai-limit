@@ -27,6 +27,7 @@ CODEX_BASE = pathlib.Path.home() / ".codex" / "sessions"
 _CODEX_WINDOW_CACHE = pathlib.Path.home() / ".codex_window_cache"
 TZ_LOCAL = datetime.datetime.now().astimezone().tzinfo
 TZ_ABBR  = datetime.datetime.now().astimezone().strftime('%Z')
+__version__ = "0.3.0"
 
 # ── 外观配置（可直接修改） ────────────────────────────────────────────────────
 WARN_THRESHOLD = 20    # 剩余低于此值（%）显示黄色
@@ -57,7 +58,7 @@ def _bold_bar(pct: float, width: int = 20) -> str:
 
 
 REMOTE_TIMEOUT_SEC = 15
-CLAUDE_WEB_TIMEOUT_SEC = 10
+CLAUDE_WEB_TIMEOUT_SEC = 15
 
 
 def _detect_lang() -> str:
@@ -110,6 +111,12 @@ def fmt_tokens(n: int) -> str:
     return str(n)
 
 
+def fmt_plan(plan: str) -> str:
+    if not plan or plan == "?":
+        return "?"
+    return str(plan).replace("_", " ").title()
+
+
 def fmt_dt(dt: datetime.datetime) -> str:
     return f"{dt.strftime('%m-%d %H:%M')} {TZ_ABBR}"
 
@@ -118,11 +125,31 @@ def fmt_reset_dt(dt: datetime.datetime) -> str:
     _bare_zh = ["一", "二", "三", "四", "五", "六", "日"]
     _bare_en = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
     today = datetime.datetime.now(TZ_LOCAL).date()
-    next_week = dt.date().isocalendar()[:2] > today.isocalendar()[:2]
+    target = dt.date()
+    days = (target - today).days
+    next_week = target.isocalendar()[:2] > today.isocalendar()[:2]
     if LANG == "zh":
-        wd = f"下周{_bare_zh[dt.weekday()]}" if next_week else f"周{_bare_zh[dt.weekday()]}  "
+        if days == 0:
+            wd = "今天  "
+        elif days == 1:
+            wd = "明天  "
+        elif days == 2:
+            wd = "后天  "
+        elif next_week:
+            wd = f"下周{_bare_zh[dt.weekday()]}"
+        else:
+            wd = f"周{_bare_zh[dt.weekday()]}  "
     else:
-        wd = f"next {_bare_en[dt.weekday()]}" if next_week else f"{_bare_en[dt.weekday()]:<8}"
+        if days == 0:
+            wd = "today   "
+        elif days == 1:
+            wd = "tomorrow"
+        elif days == 2:
+            wd = "2 days  "
+        elif next_week:
+            wd = f"next {_bare_en[dt.weekday()]}"
+        else:
+            wd = f"{_bare_en[dt.weekday()]:<8}"
     return f"{wd} {dt.strftime('%m-%d %H:%M')} {TZ_ABBR}"
 
 
@@ -138,11 +165,7 @@ class ClaudeWebError(Exception):
     pass
 
 
-def live_claude_usage(timeout: int = CLAUDE_WEB_TIMEOUT_SEC) -> dict:
-    """
-    通过浏览器 session cookie 调用 claude.ai/api/organizations/{org}/usage。
-    返回形如 {"five_hour": {...}, "seven_day": {...}} 的 dict。
-    """
+def _claude_web_context(referer: str) -> tuple[str, dict]:
     try:
         import browser_cookie3
     except ImportError:
@@ -178,28 +201,32 @@ def live_claude_usage(timeout: int = CLAUDE_WEB_TIMEOUT_SEC) -> dict:
         ))
 
     cookie_header = "; ".join(f"{n}={v}" for n, v in cookies)
+    headers = {
+        "Cookie": cookie_header,
+        "Accept": "application/json",
+        "Accept-Language": "en-US,en;q=0.9",
+        "Origin": "https://claude.ai",
+        "Referer": referer,
+        "Sec-Fetch-Dest": "empty",
+        "Sec-Fetch-Mode": "cors",
+        "Sec-Fetch-Site": "same-origin",
+        "User-Agent": (
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/124.0.0.0 Safari/537.36"
+        ),
+    }
+    return org_id, headers
 
+
+def _claude_web_get(path: str, headers: dict, timeout: int) -> dict:
     import urllib.request
     import urllib.error
 
-    url = f"https://claude.ai/api/organizations/{org_id}/usage"
+    url = f"https://claude.ai{path}"
     req = urllib.request.Request(
         url,
-        headers={
-            "Cookie": cookie_header,
-            "Accept": "application/json",
-            "Accept-Language": "en-US,en;q=0.9",
-            "Origin": "https://claude.ai",
-            "Referer": "https://claude.ai/settings/usage",
-            "Sec-Fetch-Dest": "empty",
-            "Sec-Fetch-Mode": "cors",
-            "Sec-Fetch-Site": "same-origin",
-            "User-Agent": (
-                "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-                "AppleWebKit/537.36 (KHTML, like Gecko) "
-                "Chrome/124.0.0.0 Safari/537.36"
-            ),
-        },
+        headers=headers,
     )
     try:
         with urllib.request.urlopen(req, timeout=timeout) as r:
@@ -213,6 +240,46 @@ def live_claude_usage(timeout: int = CLAUDE_WEB_TIMEOUT_SEC) -> dict:
         return json.loads(body)
     except json.JSONDecodeError:
         raise ClaudeWebError(f"非 JSON 响应: {body[:300].decode(errors='replace')}")
+
+
+def live_claude_usage(timeout: int = CLAUDE_WEB_TIMEOUT_SEC) -> dict:
+    """
+    通过浏览器 session cookie 调用 claude.ai/api/organizations/{org}/usage。
+    返回形如 {"five_hour": {...}, "seven_day": {...}} 的 dict。
+    """
+    org_id, headers = _claude_web_context("https://claude.ai/settings/usage")
+    return _claude_web_get(
+        f"/api/organizations/{org_id}/usage",
+        headers,
+        timeout,
+    )
+
+
+def live_claude_plan(timeout: int = CLAUDE_WEB_TIMEOUT_SEC) -> str | None:
+    """
+    读取 Claude 活跃组织能力，映射为用户可见套餐名；没有可靠字段时返回 None。
+    """
+    org_id, headers = _claude_web_context("https://claude.ai/settings/billing")
+    data = _claude_web_get(
+        f"/api/organizations/{org_id}",
+        headers,
+        timeout,
+    )
+    capabilities = set(data.get("capabilities") or [])
+    raven_type = data.get("raven_type")
+    if raven_type == "enterprise":
+        return "Enterprise"
+    if raven_type == "team":
+        return "Team"
+    if "claude_max" in capabilities:
+        return "Max"
+    if "claude_pro" in capabilities:
+        return "Pro"
+    if "raven" in capabilities:
+        return "Enterprise"
+    if "chat" in capabilities:
+        return "Free"
+    return None
 
 
 # ── Claude 解析 ───────────────────────────────────────────────────────────────
@@ -449,6 +516,12 @@ class CodexWebError(Exception):
     pass
 
 
+class CodexAuthError(CodexWebError):
+    """401 / 403：未登录 ChatGPT 或无 Codex 权限（可能未订阅）。
+    捕获后应直接跳过所有 fallback，app-server 也会因同样原因失败。"""
+    pass
+
+
 def _load_chatgpt_cookies():
     try:
         import browser_cookie3
@@ -571,6 +644,13 @@ def live_codex_web_usage(timeout: int = CLAUDE_WEB_TIMEOUT_SEC):
         with urllib.request.urlopen(req, timeout=timeout) as r:
             body = r.read()
     except urllib.error.HTTPError as e:
+        if e.code in (401, 403):
+            raise CodexAuthError(
+                t(
+                    f"HTTP {e.code}：未登录 ChatGPT 或无 Codex 权限（可能未订阅，或需重新登录）",
+                    f"HTTP {e.code}: not signed in to ChatGPT or no Codex access (subscription may be required)",
+                )
+            )
         raise CodexWebError(f"HTTP {e.code}")
     except Exception as e:
         raise CodexWebError(str(e))
@@ -597,12 +677,34 @@ def _save_window_cache(resets_at_unix):
         pass
 
 
+def _prompt_app_server_confirm() -> bool:
+    """交互式询问是否允许 app-server 查询触发新的 5h 窗口。
+
+    仅在 TTY 环境调用；返回 True 表示用户同意继续。
+    """
+    msg = t(
+        "Web 查询失败，且当前窗口未激活。\n"
+        "继续调用 app-server 会触发新的 Codex 5 小时冷却窗口。\n"
+        "确认继续？[y/N]: ",
+        "Web fetch failed and no active window cached.\n"
+        "Calling app-server will trigger a new Codex 5-hour cooldown.\n"
+        "Continue? [y/N]: ",
+    )
+    try:
+        ans = input(msg).strip().lower()
+    except (EOFError, KeyboardInterrupt):
+        print()
+        return False
+    return ans in ("y", "yes")
+
+
 def current_codex_rate_limits():
     """返回 (timestamp, rate_limits_dict, source_label, fallback_reason)
 
     数据源优先级：
       1. chatgpt.com web 接口（只读，不触发窗口；覆盖 Cloud + CLI 合并用量）
-      2. app-server live（注意：会触发新的 Codex 5 小时冷却窗口，见 README）
+      2. app-server live（条件守卫：cached_expiry > now 时安全直调；
+         否则在 TTY 下二次询问，非 TTY 直接跳过，避免误触发新 5h 窗口）
       3. 本地快照（~/.codex/sessions/）
     """
     reasons = []
@@ -614,24 +716,42 @@ def current_codex_rate_limits():
         if resets_at:
             _save_window_cache(float(resets_at))
         return ts, rl, "web", None
+    except CodexAuthError as e:
+        # 认证/权限错误：app-server 也会因同样原因失败，直接跳过所有 fallback
+        return None, None, "no_access", str(e)
     except CodexWebError as e:
         reasons.append(f"web: {e}")
     except Exception as e:
         reasons.append(f"web: {e.__class__.__name__}: {e}")
 
-    # 2. app-server 兜底（会触发 5h 窗口，详见 README 副作用说明）
-    try:
-        ts, rl = live_codex_rate_limits()
-        resets_at = (rl.get("primary") or {}).get("resets_at")
-        if resets_at:
-            _save_window_cache(float(resets_at))
-        return ts, rl, "live", None
-    except (CodexRemoteError, OSError, subprocess.SubprocessError) as e:
-        reasons.append(f"app-server: {e or e.__class__.__name__}")
-    except Exception as e:
-        reasons.append(f"app-server: {e.__class__.__name__}: {e}")
+    # 2. app-server：仅在安全条件下调用
+    cached_expiry = _load_window_cache()
+    now_unix = datetime.datetime.now(datetime.timezone.utc).timestamp()
+    window_active = cached_expiry is not None and cached_expiry > now_unix
 
-    # 3. 本地快照
+    if window_active:
+        allow_app_server = True
+    elif sys.stdin.isatty() and sys.stdout.isatty():
+        allow_app_server = _prompt_app_server_confirm()
+        if not allow_app_server:
+            reasons.append("app-server: user_declined")
+    else:
+        allow_app_server = False
+        reasons.append("app-server: non_tty_skip")
+
+    if allow_app_server:
+        try:
+            ts, rl = live_codex_rate_limits()
+            resets_at = (rl.get("primary") or {}).get("resets_at")
+            if resets_at:
+                _save_window_cache(float(resets_at))
+            return ts, rl, "live", None
+        except (CodexRemoteError, OSError, subprocess.SubprocessError) as e:
+            reasons.append(f"app-server: {e or e.__class__.__name__}")
+        except Exception as e:
+            reasons.append(f"app-server: {e.__class__.__name__}: {e}")
+
+    # 3. 本地快照兜底
     ts, rl = latest_codex_rate_limits()
     return ts, rl, "snapshot", " → ".join(reasons) if reasons else None
 
@@ -825,9 +945,13 @@ def render_codex(since: datetime.datetime):
 
     ts, rl, source, fallback_reason = current_codex_rate_limits()
     if not rl:
-        if fallback_reason:
-            print(f"  {t('实时读取失败', 'Live fetch failed')}: {fallback_reason}")
-        print(t("  （未找到 CodeX 数据）", "  (no CodeX data found)"))
+        if source == "no_access":
+            print(f"  {_WARN}{t('未检测到 Codex 权限', 'No Codex access detected')}{_RST}")
+            print(f"  {_DIM}{fallback_reason}{_RST}")
+        else:
+            if fallback_reason:
+                print(f"  {t('实时读取失败', 'Live fetch failed')}: {fallback_reason}")
+            print(t("  （未找到 CodeX 数据）", "  (no CodeX data found)"))
         return
 
     now_local = datetime.datetime.now(TZ_LOCAL)
@@ -848,7 +972,7 @@ def render_codex(since: datetime.datetime):
     if fallback_reason and source == "snapshot":
         print(f"  {t('实时读取失败', 'Live fetch failed')}: {fallback_reason}")
     plan = rl.get("plan_type") or "?"
-    print(f"  {t('套餐', 'Plan')}: {_BOLD}{plan.upper()}{_RST}")
+    print(f"  {t('套餐', 'Plan')}: {_BOLD}{fmt_plan(plan)}{_RST}")
     print()
 
     secondary = rl.get("secondary") or {}

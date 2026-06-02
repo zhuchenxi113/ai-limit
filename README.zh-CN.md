@@ -2,9 +2,47 @@
 
 [English](README.md)
 
-查看 Claude Code 和 CodeX 的实时剩余额度与 token 消耗情况。
+查看 Claude Code 和 CodeX 的实时剩余额度与 token 消耗情况。支持 macOS 菜单栏 App 和命令行两种使用方式。
 
-## 效果
+## macOS 菜单栏 App
+
+常驻菜单栏，实时显示剩余额度，无需打开终端。
+
+```
+Claude 85% ▰▰▰▰   CodeX 99% ▰▰▰▰
+```
+
+**一键安装**
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/zhuchenxi113/ai-limit/main/install.sh | bash
+```
+
+首次启动：右键点击 App → 打开 → 仍要打开（绕过 Gatekeeper，App 尚未公证）
+
+**功能**
+
+- 中英文切换
+- 5小时 / 7天 窗口切换
+- Claude 和 CodeX 额度同时显示，可单独切换
+- 手动刷新
+- 点击展开详细数据（套餐、用量、重置时间）
+
+**从源码构建**
+
+```bash
+cd menubar
+/opt/homebrew/bin/python3.13 setup.py py2app
+bash make-dmg.sh
+```
+
+> 必须使用 Homebrew Python，不能用 Anaconda Python（dylib 路径冲突导致 App 无法运行）。
+
+---
+
+## 命令行
+
+### 效果
 
 ```
 ────────────────────────────────────────────────────
@@ -46,7 +84,7 @@
 ────────────────────────────────────────────────────
 ```
 
-## 环境要求
+### 环境要求
 
 - macOS
 - Python 3.8+
@@ -54,7 +92,7 @@
 - Chrome 或 Firefox 已登录 [chatgpt.com](https://chatgpt.com)（用于读取 CodeX 额度，推荐路径）
 - 可选：[CodeX CLI](https://developers.openai.com/codex/cli) 已安装并登录（作为浏览器 cookie 失效时的兜底路径）
 
-## 安装
+### 安装
 
 **1. 克隆项目**
 
@@ -82,7 +120,7 @@ alias ai-limit="python3 ~/Developer/ai-limit/usage.py"
 source ~/.zshrc
 ```
 
-## 用法
+### 用法
 
 ```bash
 ai-limit              # 最近 7 天（默认）
@@ -97,6 +135,8 @@ ai-limit --detail     # 展示每个模型的详细 token 统计
 AI_LIMIT_LANG=en ai-limit   # 强制英文
 AI_LIMIT_LANG=zh ai-limit   # 强制中文
 ```
+
+---
 
 ## 数据来源
 

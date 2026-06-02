@@ -2,9 +2,47 @@
 
 [中文说明](README.zh-CN.md)
 
-A lightweight CLI tool to monitor real-time **Claude Code** and **Codex** usage limits, quota consumption, and token statistics — so you can adjust your AI usage intensity before hitting rate limits.
+A lightweight tool to monitor real-time **Claude Code** and **Codex** usage limits, quota consumption, and token statistics — so you can adjust your AI usage before hitting rate limits. Available as a macOS menu bar app or a CLI.
 
-## Preview
+## macOS Menu Bar App
+
+Lives in the menu bar, shows live quota at a glance — no terminal needed.
+
+```
+Claude 85% ▰▰▰▰   CodeX 99% ▰▰▰▰
+```
+
+**One-line install**
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/zhuchenxi113/ai-limit/main/install.sh | bash
+```
+
+First launch: right-click the app → Open → Open Anyway (bypasses Gatekeeper; the app is not notarized)
+
+**Features**
+
+- Chinese / English UI toggle
+- 5-hour / 7-day quota window toggle
+- Claude and Codex shown simultaneously, each independently configurable
+- Manual refresh
+- Click to expand details (plan, usage, reset time)
+
+**Build from source**
+
+```bash
+cd menubar
+/opt/homebrew/bin/python3.13 setup.py py2app
+bash make-dmg.sh
+```
+
+> Homebrew Python is required. Anaconda Python causes dylib path conflicts that prevent the packaged app from launching.
+
+---
+
+## CLI
+
+### Preview
 
 ```
 ────────────────────────────────────────────────────
@@ -46,15 +84,15 @@ A lightweight CLI tool to monitor real-time **Claude Code** and **Codex** usage 
 ────────────────────────────────────────────────────
 ```
 
-## Requirements
+### Requirements
 
 - macOS
 - Python 3.8+
 - Chrome or Firefox signed in to [claude.ai](https://claude.ai) (for Claude quota)
 - Chrome or Firefox signed in to [chatgpt.com](https://chatgpt.com) (recommended path for Codex quota)
-- Optional: [Codex CLI](https://developers.openai.com/codex/cli) installed and signed in (fallback path when browser cookies are unavailable)
+- Optional: [Codex CLI](https://developers.openai.com/codex/cli) installed and signed in (fallback when browser cookies are unavailable)
 
-## Installation
+### Installation
 
 **1. Clone the repo**
 
@@ -82,7 +120,7 @@ Then reload:
 source ~/.zshrc
 ```
 
-## Usage
+### Usage
 
 ```bash
 ai-limit              # Last 7 days (default)
@@ -91,12 +129,14 @@ ai-limit --all        # Full history
 ai-limit --detail     # Show per-model token breakdown
 ```
 
-Output language is auto-detected from the system locale (Chinese on zh systems, English elsewhere). Override with the `AI_LIMIT_LANG` environment variable:
+Output language is auto-detected from the system locale (Chinese on zh systems, English elsewhere). Override with `AI_LIMIT_LANG`:
 
 ```bash
 AI_LIMIT_LANG=en ai-limit   # force English
 AI_LIMIT_LANG=zh ai-limit   # force Chinese
 ```
+
+---
 
 ## Data Sources
 
