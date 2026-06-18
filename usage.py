@@ -48,6 +48,31 @@ _CRT = COLOR_CRIT if _C else ""
 def _bc(r: float) -> str:
     return _OK if r >= WARN_THRESHOLD else (_WRN if r >= CRIT_THRESHOLD else _CRT)
 
+
+def _chrome_ua() -> str:
+    ver = "124.0.0.0"
+    candidates = (
+        ["/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"]
+        if sys.platform == "darwin"
+        else ["google-chrome", "google-chrome-stable", "chromium-browser", "chromium"]
+    )
+    for cmd in candidates:
+        try:
+            raw = subprocess.check_output(
+                [cmd, "--version"], timeout=3, stderr=subprocess.DEVNULL,
+            ).decode().strip()
+            parts = raw.split()
+            if parts:
+                ver = parts[-1]
+                break
+        except Exception:
+            continue
+    return (
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        f"Chrome/{ver} Safari/537.36"
+    )
+
 def _colored_bar(remaining: float, width: int = 20) -> str:
     filled = round(remaining / 100 * width)
     return f"{_bc(remaining)}{'█'*filled}{_DIM}{'░'*(width-filled)}{_RST}"
@@ -251,11 +276,7 @@ def _claude_web_context(referer: str) -> tuple[str, dict]:
         "Sec-Fetch-Dest": "empty",
         "Sec-Fetch-Mode": "cors",
         "Sec-Fetch-Site": "same-origin",
-        "User-Agent": (
-            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-            "AppleWebKit/537.36 (KHTML, like Gecko) "
-            "Chrome/124.0.0.0 Safari/537.36"
-        ),
+        "User-Agent": _chrome_ua(),
     }
     return org_id, headers
 
@@ -618,10 +639,7 @@ def _load_chatgpt_cookies():
     ))
 
 
-_CHATGPT_UA = (
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-    "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
-)
+_CHATGPT_UA = _chrome_ua()
 
 
 def _chatgpt_headers(cookie_header: str, *, referer: str = "https://chatgpt.com/codex/cloud/settings/analytics", bearer: str = None) -> dict:
