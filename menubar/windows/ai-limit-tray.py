@@ -5,8 +5,8 @@
 是独立文件。共享 usage.py 的数据抓取逻辑和偏好设置文件格式（~/.ai-limit-menubar*）。
 
 v1 范围（已实现）：Claude/Codex 用量图标 + 详情菜单、5h/7d 显示切换、
-刷新频率、语言切换、开机自启、检查更新（仅版本比对+跳转下载页，
-下载/校验/静默安装是 Phase 4 范围，尚未实现）。
+刷新频率、语言切换、开机自启、检查更新（完整下载+签名校验+触发
+Inno Setup 静默安装+自动重启，见 updater_win.py）。
 
 v1 暂缺（后续增量）：mac 版的服务状态监控子菜单（Claude/Codex Status
 Page 组件级勾选）、菜单栏样式切换（number-only/battery-only，v1 图标
@@ -33,9 +33,12 @@ from icon_render import render_service_icon, render_placeholder_icon, is_dark_ta
 from autostart_win import is_autostart_enabled, set_autostart
 from dialogs import show_alert
 import fetchers
+import updater_win
 
 _SYSTEM_LANG = detect_system_lang()
 _REFRESH_MINS = (1, 2, 3, 4, 5)
+_GITHUB_PAGE = "https://github.com/zhuchenxi113/ai-limit/releases"
+_GITEE_PAGE = "https://gitee.com/zhuchenxi113/ai-limit/releases"
 
 
 class AiLimitTray:
@@ -73,6 +76,22 @@ class AiLimitTray:
         self._claude_icon.show()
         self._codex_icon.show()
         self._kick_background_fetch()
+        self._check_update_failure_marker()
+
+    def _check_update_failure_marker(self):
+        """启动时检查一次上次自动更新有没有走完，只提示一次。"""
+        result = updater_win.check_update_pending_marker(__version__)
+        if result is None:
+            return
+        lang = self._lang()
+        show_alert(
+            tr(lang, "自动更新可能未完成", "Auto-Update May Be Incomplete"),
+            tr(lang, f"当前仍是 {__version__}，上次触发的更新目标是 {result.get('target_version', '?')}。"
+                     f"可前往下载页手动更新。",
+                     f"Still on {__version__}; the last update targeted {result.get('target_version', '?')}. "
+                     "You can update manually from the download page."),
+            tr(lang, "好", "OK"),
+        )
 
     # ── 状态辅助 ──────────────────────────────────────────────────────────
 
@@ -175,20 +194,29 @@ class AiLimitTray:
         self._check_update_action.setText(tr(lang, "检查中…", "Checking…"))
 
         def _worker():
-            try:
-                import urllib.request, json as _json
-                req = urllib.request.Request(
-                    "https://api.github.com/repos/zhuchenxi113/ai-limit/releases/latest",
-                    headers={"User-Agent": "ai-limit"},
-                )
-                with urllib.request.urlopen(req, timeout=6) as resp:
-                    data = _json.loads(resp.read().decode("utf-8"))
-                latest = data.get("tag_name", "").lstrip("v")
-                result = {"ok": True, "latest": latest}
-            except Exception as e:
-                result = {"ok": False, "error": str(e)}
+            info = updater_win.fetch_latest_release_info()
             with self._pending_lock:
-                self._pending = ("update_result", result)
+                self._pending = ("update_check", info)
+
+        threading.Thread(target=_worker, daemon=True).start()
+
+    def _start_update_download(self, info: dict):
+        """用户在"发现新版本"弹窗里点了确认，后台下载+校验+触发安装。"""
+        lang = self._lang()
+
+        def _worker():
+            try:
+                import tempfile
+                dest_dir = pathlib.Path(tempfile.mkdtemp(prefix="ai-limit-update-"))
+                setup_path = updater_win.download_release_setup(info["asset_url"], dest_dir)
+                updater_win.verify_installer(setup_path, info["latest"])
+                result = {"ok": True, "setup_path": str(setup_path), "version": info["latest"]}
+            except updater_win.UpdateFailed as e:
+                result = {"ok": False, "reason": e.reason, "detail": e.detail, "source": info.get("source")}
+            except Exception as e:
+                result = {"ok": False, "reason": "unknown", "detail": str(e), "source": info.get("source")}
+            with self._pending_lock:
+                self._pending = ("update_download", result)
 
         threading.Thread(target=_worker, daemon=True).start()
 
@@ -221,34 +249,70 @@ class AiLimitTray:
             state.save_cache(self._claude, self._codex)
             state.append_history(claude, codex)
             self._render()
-        elif kind == "update_result":
+        elif kind == "update_check":
             lang = self._lang()
             self._check_update_action.setEnabled(True)
             self._check_update_action.setText(tr(lang, "检查更新", "Check for Updates"))
-            if not payload.get("ok"):
+            info = payload
+            if info.get("error"):
                 show_alert(
                     tr(lang, "检查更新失败", "Update Check Failed"),
-                    str(payload.get("error", "")),
+                    tr(lang, "网络不可用或 GitHub/Gitee 均无法访问", "Network unavailable or both GitHub/Gitee unreachable"),
                     tr(lang, "好", "OK"),
                 )
                 return
-            latest = payload.get("latest", "")
-            if latest and latest != __version__:
-                opened = show_alert(
-                    tr(lang, "发现新版本", "New Version Available"),
-                    tr(lang, f"当前 {__version__}，最新 {latest}。是否前往下载页？",
-                             f"Current {__version__}, latest {latest}. Open download page?"),
-                    tr(lang, "打开下载页", "Open Download Page"),
-                    tr(lang, "取消", "Cancel"),
-                )
-                if opened:
-                    webbrowser.open("https://github.com/zhuchenxi113/ai-limit/releases")
-            else:
+            latest = info.get("latest", "")
+            if not latest or updater_win._version_tuple(latest) <= updater_win._version_tuple(__version__):
                 show_alert(
                     tr(lang, "已是最新版本", "Up to Date"),
                     tr(lang, f"当前版本 {__version__} 已是最新。", f"Version {__version__} is up to date."),
                     tr(lang, "好", "OK"),
                 )
+                return
+            if not info.get("asset_url"):
+                # 找到了新版本但这次 Release 没有 Windows 安装包资产（比如刚发版
+                # 还没传完），只能退到手动下载页，不能假装能自动更新。
+                opened = show_alert(
+                    tr(lang, "发现新版本", "New Version Available"),
+                    tr(lang, f"当前 {__version__}，最新 {latest}，但未找到 Windows 安装包，是否前往下载页？",
+                             f"Current {__version__}, latest {latest}, but no Windows installer asset found. Open download page?"),
+                    tr(lang, "打开下载页", "Open Download Page"),
+                    tr(lang, "取消", "Cancel"),
+                )
+                if opened:
+                    page = _GITEE_PAGE if info.get("source") == "gitee" else _GITHUB_PAGE
+                    webbrowser.open(page)
+                return
+            confirmed = show_alert(
+                tr(lang, "发现新版本", "New Version Available"),
+                tr(lang, f"当前 {__version__}，最新 {latest}。是否立即更新？更新时会退出并重启。",
+                         f"Current {__version__}, latest {latest}. Update now? The app will quit and restart."),
+                tr(lang, "立即更新", "Update Now"),
+                tr(lang, "取消", "Cancel"),
+            )
+            if confirmed:
+                self._check_update_action.setEnabled(False)
+                self._check_update_action.setText(tr(lang, "更新中…", "Updating…"))
+                self._start_update_download(info)
+        elif kind == "update_download":
+            lang = self._lang()
+            if payload.get("ok"):
+                updater_win.trigger_silent_install(payload["setup_path"], payload["version"])
+                self._app.quit()
+                return
+            self._check_update_action.setEnabled(True)
+            self._check_update_action.setText(tr(lang, "检查更新", "Check for Updates"))
+            detail = payload.get("detail", "")
+            opened = show_alert(
+                tr(lang, "更新失败", "Update Failed"),
+                tr(lang, f"自动更新未完成（{detail}）。是否打开下载页手动安装？",
+                         f"Automatic update did not complete ({detail}). Open the download page to install manually?"),
+                tr(lang, "打开下载页", "Open Download Page"),
+                tr(lang, "取消", "Cancel"),
+            )
+            if opened:
+                page = _GITEE_PAGE if payload.get("source") == "gitee" else _GITHUB_PAGE
+                webbrowser.open(page)
 
     # ── 渲染 ──────────────────────────────────────────────────────────────
 
