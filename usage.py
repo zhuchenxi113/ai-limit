@@ -15,13 +15,17 @@ import locale as _locale
 import os
 import json
 import pathlib
-import select
+import queue
 import shutil
 import socket
 import struct
 import subprocess
 import sys
+import threading
 import time
+
+IS_WINDOWS = sys.platform == "win32"
+IS_MACOS = sys.platform == "darwin"
 
 CLAUDE_BASE = pathlib.Path.home() / ".claude" / "projects"
 CODEX_BASE = pathlib.Path.home() / ".codex" / "sessions"
@@ -39,6 +43,21 @@ COLOR_WARN = "\033[33m"   # 黄：偏低
 COLOR_CRIT = "\033[31m"   # 红：告警
 # ─────────────────────────────────────────────────────────────────────────────
 
+if IS_WINDOWS:
+    try:
+        import ctypes
+        _kernel32 = ctypes.windll.kernel32
+        _kernel32.SetConsoleMode(_kernel32.GetStdHandle(-11), 7)
+    except Exception:
+        pass
+    # 中文 Windows 终端默认用 GBK（cp936）codepage，画进度条用的 Unicode 方块字符
+    # （░▓ 等）在 GBK 下无法编码，不重定向输出编码会直接崩溃退出。
+    try:
+        sys.stdout.reconfigure(encoding="utf-8")
+        sys.stderr.reconfigure(encoding="utf-8")
+    except Exception:
+        pass
+
 _C   = sys.stdout.isatty()
 _DIM = "\033[2m" if _C else ""
 _BOLD= "\033[1m" if _C else ""
@@ -54,9 +73,37 @@ def _bc(r: float) -> str:
 @functools.lru_cache(maxsize=1)
 def _chrome_ua() -> str:
     ver = "124.0.0.0"
+    if IS_WINDOWS:
+        # 浏览器已在运行时，Windows 上 `chrome.exe/msedge.exe --version` 不会打印版本号，
+        # 而是把参数转发给已运行实例、原样打印一句本地化提示（如"正在现有浏览器会话中打开。"），
+        # 且该提示是本地 ANSI codepage 编码，UTF-8 decode 会直接抛异常。
+        # 改为直接读可执行文件自身的 VERSIONINFO 资源，不受运行状态影响，也不需要唤起浏览器。
+        candidates = [
+            p for p in (
+                os.path.expandvars(r"%ProgramFiles%\Google\Chrome\Application\chrome.exe"),
+                os.path.expandvars(r"%ProgramFiles(x86)%\Google\Chrome\Application\chrome.exe"),
+                os.path.expandvars(r"%LocalAppData%\Google\Chrome\Application\chrome.exe"),
+                os.path.expandvars(r"%ProgramFiles(x86)%\Microsoft\Edge\Application\msedge.exe"),
+                os.path.expandvars(r"%ProgramFiles%\Microsoft\Edge\Application\msedge.exe"),
+            ) if os.path.exists(p)
+        ]
+        for path in candidates:
+            try:
+                import win32api
+                info = win32api.GetFileVersionInfo(path, "\\")
+                ms, ls = info["FileVersionMS"], info["FileVersionLS"]
+                ver = f"{ms >> 16}.{ms & 0xFFFF}.{ls >> 16}.{ls & 0xFFFF}"
+                break
+            except Exception:
+                continue
+        return (
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            f"Chrome/{ver} Safari/537.36"
+        )
     candidates = (
         ["/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"]
-        if sys.platform == "darwin"
+        if IS_MACOS
         else ["google-chrome", "google-chrome-stable", "chromium-browser", "chromium"]
     )
     for cmd in candidates:
@@ -262,7 +309,10 @@ def _claude_web_context(referer: str) -> tuple[str, dict]:
 
     cookies = []
     errs = []
-    for name, loader in [("Chrome", browser_cookie3.chrome), ("Firefox", browser_cookie3.firefox)]:
+    loaders = [("Chrome", browser_cookie3.chrome), ("Firefox", browser_cookie3.firefox)]
+    if IS_WINDOWS:
+        loaders.insert(1, ("Edge", browser_cookie3.edge))
+    for name, loader in loaders:
         try:
             jar = loader(domain_name=".claude.ai")
             cookies = [(c.name, c.value) for c in jar]
@@ -273,9 +323,14 @@ def _claude_web_context(referer: str) -> tuple[str, dict]:
 
     if not cookies:
         detail = f" ({'; '.join(errs)})" if errs else ""
+        hint_zh = "，请先在浏览器登录 claude.ai"
+        hint_en = ", please log in to claude.ai first"
+        if IS_WINDOWS:
+            hint_zh += "（Windows 上 Chrome/Edge 因新版加密保护无法读取 Cookie，请改用 Firefox 登录后重试）"
+            hint_en += " (on Windows, Chrome/Edge cookies can't be read due to App-Bound Encryption — please log in via Firefox instead)"
         raise ClaudeWebError(t(
-            f"无法读取浏览器 cookie{detail}，请先在浏览器登录 claude.ai",
-            f"cannot read browser cookies{detail}, please log in to claude.ai first",
+            f"无法读取浏览器 cookie{detail}{hint_zh}",
+            f"cannot read browser cookies{detail}{hint_en}",
         ))
 
     cookie_dict = dict(cookies)
@@ -526,7 +581,17 @@ def live_codex_rate_limits(timeout: int = REMOTE_TIMEOUT_SEC):
 
 def _wait_codex_app_server(proc: subprocess.Popen, port: int, timeout: int):
     deadline = time.monotonic() + timeout
+    line_q: "queue.Queue[str]" = queue.Queue()
     lines: list[str] = []
+
+    def _pump_stdout():
+        if not proc.stdout:
+            return
+        for line in iter(proc.stdout.readline, ""):
+            line_q.put(line)
+
+    threading.Thread(target=_pump_stdout, daemon=True).start()
+
     while time.monotonic() < deadline:
         if proc.poll() is not None:
             raise CodexRemoteError("app-server exited: " + "".join(lines[-3:]).strip())
@@ -535,10 +600,10 @@ def _wait_codex_app_server(proc: subprocess.Popen, port: int, timeout: int):
                 return
         except OSError:
             pass
-        if proc.stdout:
-            ready, _, _ = select.select([proc.stdout], [], [], 0)
-            if ready:
-                lines.append(proc.stdout.readline())
+        try:
+            lines.append(line_q.get_nowait())
+        except queue.Empty:
+            pass
         time.sleep(0.1)
     raise CodexRemoteError("app-server start timed out")
 
@@ -682,7 +747,10 @@ def _load_chatgpt_cookies():
             "browser_cookie3 not installed, run: pip install browser-cookie3",
         ))
     errs = []
-    for name, loader in [("Chrome", browser_cookie3.chrome), ("Firefox", browser_cookie3.firefox)]:
+    loaders = [("Chrome", browser_cookie3.chrome), ("Firefox", browser_cookie3.firefox)]
+    if IS_WINDOWS:
+        loaders.insert(1, ("Edge", browser_cookie3.edge))
+    for name, loader in loaders:
         try:
             jar = loader(domain_name=".chatgpt.com")
             cookies = [(c.name, c.value) for c in jar]
@@ -691,9 +759,14 @@ def _load_chatgpt_cookies():
         except Exception as e:
             errs.append(f"{name}: {e}")
     detail = f" ({'; '.join(errs)})" if errs else ""
+    hint_zh = "，请先在浏览器登录 chatgpt.com"
+    hint_en = ", please log in to chatgpt.com in your browser"
+    if IS_WINDOWS:
+        hint_zh += "（Windows 上 Chrome/Edge 因新版加密保护无法读取 Cookie，请改用 Firefox 登录后重试）"
+        hint_en += " (on Windows, Chrome/Edge cookies can't be read due to App-Bound Encryption — please log in via Firefox instead)"
     raise CodexWebError(t(
-        f"无法读取 chatgpt.com cookie{detail}，请先在浏览器登录 chatgpt.com",
-        f"cannot read chatgpt.com cookies{detail}, please log in to chatgpt.com in your browser",
+        f"无法读取 chatgpt.com cookie{detail}{hint_zh}",
+        f"cannot read chatgpt.com cookies{detail}{hint_en}",
     ))
 
 
