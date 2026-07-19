@@ -23,6 +23,8 @@ import subprocess
 import sys
 import threading
 import time
+import urllib.error
+import urllib.request
 
 IS_WINDOWS = sys.platform == "win32"
 IS_MACOS = sys.platform == "darwin"
@@ -296,6 +298,75 @@ class ClaudeWebError(Exception):
     def __init__(self, message, kind="generic"):
         super().__init__(message)
         self.kind = kind
+
+
+class ClaudeOAuthError(Exception):
+    """Claude Code OAuth 凭据或 usage 请求失败；kind=auth 时可回退网页登录态。"""
+    def __init__(self, message, kind="generic"):
+        super().__init__(message)
+        self.kind = kind
+
+
+def _claude_oauth_credentials_path() -> pathlib.Path:
+    configured = os.environ.get("CLAUDE_CONFIG_DIR", "").split(",", 1)[0].strip()
+    root = pathlib.Path(configured).expanduser() if configured else pathlib.Path.home() / ".claude"
+    return root / ".credentials.json"
+
+
+def _claude_oauth_plan(oauth: dict) -> str | None:
+    subscription = str(oauth.get("subscriptionType") or "").strip()
+    tier = str(oauth.get("rateLimitTier") or "").strip().lower()
+    if "claude_max_20x" in tier:
+        return "Max 20x"
+    if "claude_max_5x" in tier:
+        return "Max 5x"
+    if subscription:
+        return subscription.replace("_", " ").title()
+    if "max" in tier:
+        return "Max"
+    if "pro" in tier:
+        return "Pro"
+    return None
+
+
+def live_claude_oauth_usage(timeout: int = CLAUDE_WEB_TIMEOUT_SEC) -> tuple[dict, str | None]:
+    """复用 Claude Code OAuth 登录态读取核心额度，不修改官方凭据文件。"""
+    path = _claude_oauth_credentials_path()
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+        oauth = raw.get("claudeAiOauth") or {}
+    except FileNotFoundError:
+        raise ClaudeOAuthError("Claude Code OAuth credentials not found", kind="auth")
+    except Exception as e:
+        raise ClaudeOAuthError(f"invalid Claude Code OAuth credentials: {e}", kind="auth")
+
+    token = oauth.get("accessToken")
+    scopes = set(oauth.get("scopes") or [])
+    if not token:
+        raise ClaudeOAuthError("Claude Code OAuth access token missing", kind="auth")
+    if "user:profile" not in scopes:
+        raise ClaudeOAuthError("Claude Code OAuth token lacks user:profile scope", kind="auth")
+
+    req = urllib.request.Request(
+        "https://api.anthropic.com/api/oauth/usage",
+        headers={
+            "Authorization": f"Bearer {token}",
+            "Accept": "application/json",
+            "anthropic-beta": "oauth-2025-04-20",
+            "User-Agent": _chrome_ua(),
+        },
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as response:
+            data = json.loads(response.read())
+    except urllib.error.HTTPError as e:
+        kind = "auth" if e.code in (401, 403) else "generic"
+        raise ClaudeOAuthError(f"Claude OAuth HTTP {e.code}", kind=kind)
+    except (urllib.error.URLError, socket.timeout, TimeoutError) as e:
+        raise ClaudeOAuthError(str(e))
+    except json.JSONDecodeError:
+        raise ClaudeOAuthError("Claude OAuth returned non-JSON response")
+    return data, _claude_oauth_plan(oauth)
 
 
 def _claude_web_context(referer: str) -> tuple[str, dict]:
@@ -736,6 +807,58 @@ class CodexAuthError(CodexWebError):
     """401 / 403：未登录 ChatGPT 或无 Codex 权限（可能未订阅）。
     捕获后应直接跳过所有 fallback，app-server 也会因同样原因失败。"""
     pass
+
+
+class CodexOAuthError(Exception):
+    """Codex CLI OAuth 凭据或 WHAM usage 请求失败。"""
+    def __init__(self, message, kind="generic"):
+        super().__init__(message)
+        self.kind = kind
+
+
+def _codex_oauth_credentials_path() -> pathlib.Path:
+    root = pathlib.Path(os.environ.get("CODEX_HOME") or (pathlib.Path.home() / ".codex")).expanduser()
+    return root / "auth.json"
+
+
+def live_codex_oauth_usage(timeout: int = CLAUDE_WEB_TIMEOUT_SEC):
+    """复用 Codex CLI 的 ChatGPT OAuth 登录态读取核心额度，不修改 auth.json。"""
+    path = _codex_oauth_credentials_path()
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+        tokens = raw.get("tokens") or {}
+    except FileNotFoundError:
+        raise CodexOAuthError("Codex OAuth credentials not found", kind="auth")
+    except Exception as e:
+        raise CodexOAuthError(f"invalid Codex OAuth credentials: {e}", kind="auth")
+
+    token = tokens.get("access_token")
+    account_id = tokens.get("account_id")
+    if raw.get("auth_mode") != "chatgpt" or not token:
+        raise CodexOAuthError("Codex is not signed in with ChatGPT OAuth", kind="auth")
+
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Accept": "application/json",
+        "User-Agent": "CodexCLI",
+    }
+    if account_id:
+        headers["ChatGPT-Account-ID"] = str(account_id)
+    req = urllib.request.Request(
+        "https://chatgpt.com/backend-api/wham/usage",
+        headers=headers,
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as response:
+            data = json.loads(response.read())
+    except urllib.error.HTTPError as e:
+        kind = "auth" if e.code in (401, 403) else "generic"
+        raise CodexOAuthError(f"Codex OAuth HTTP {e.code}", kind=kind)
+    except (urllib.error.URLError, socket.timeout, TimeoutError) as e:
+        raise CodexOAuthError(str(e))
+    except json.JSONDecodeError:
+        raise CodexOAuthError("Codex OAuth returned non-JSON response")
+    return datetime.datetime.now(datetime.timezone.utc), _normalize_web_rate_limits(data)
 
 
 def _load_chatgpt_cookies():

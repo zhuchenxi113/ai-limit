@@ -16,14 +16,15 @@ import pathlib
 import sys
 import threading
 import webbrowser
+import datetime
 
 _HERE = pathlib.Path(__file__).resolve().parent
 _REPO = _HERE.parent.parent
 sys.path.insert(0, str(_HERE))
 sys.path.insert(0, str(_REPO))
 
-from PySide6.QtCore import QTimer
-from PySide6.QtGui import QAction, QActionGroup
+from PySide6.QtCore import QPoint, QTimer
+from PySide6.QtGui import QAction, QActionGroup, QFont
 from PySide6.QtWidgets import QApplication, QMenu, QSystemTrayIcon
 
 from usage import __version__, epoch_to_local  # noqa: F401  (epoch_to_local re-exported for fetchers)
@@ -34,6 +35,7 @@ from autostart_win import is_autostart_enabled, set_autostart
 from dialogs import show_alert
 import fetchers
 import updater_win
+from usage_panel import UsagePanel
 
 _SYSTEM_LANG = detect_system_lang()
 _REFRESH_MINS = (1, 2, 3, 4, 5)
@@ -45,11 +47,12 @@ class AiLimitTray:
     def __init__(self, app: QApplication):
         self._app = app
         self._state = state.load_state()
-        self._claude = None
-        self._codex = None
+        self._claude, self._codex = state.load_cache()
+        self._last_updated = None
 
-        self._pending = None
+        self._pending = []
         self._pending_lock = threading.Lock()
+        self._fetch_generation = 0
 
         self._claude_icon = QSystemTrayIcon()
         self._codex_icon = QSystemTrayIcon()
@@ -62,6 +65,14 @@ class AiLimitTray:
         self._build_menu()
         self._claude_icon.setContextMenu(self._menu)
         self._codex_icon.setContextMenu(self._menu)
+
+        self._panel = UsagePanel(self, is_dark_taskbar())
+        self._claude_icon.activated.connect(
+            lambda reason: self._toggle_panel(self._claude_icon, reason)
+        )
+        self._codex_icon.activated.connect(
+            lambda reason: self._toggle_panel(self._codex_icon, reason)
+        )
 
         self._apply_timer = QTimer()
         self._apply_timer.timeout.connect(self._apply_pending)
@@ -106,6 +117,17 @@ class AiLimitTray:
         bar_svc = self._state.get("bar_services") or ["claude", "codex"]
         self._claude_icon.setVisible("claude" in bar_svc)
         self._codex_icon.setVisible("codex" in bar_svc)
+
+    def _toggle_panel(self, icon, reason):
+        if reason == QSystemTrayIcon.ActivationReason.Trigger:
+            self._panel.toggle_near(icon)
+
+    def refresh_from_panel(self):
+        self._panel.set_refreshing(self._lang())
+        self._kick_background_fetch()
+
+    def show_settings_menu(self, position: QPoint):
+        self._menu.popup(position)
 
     # ── 菜单构建 ──────────────────────────────────────────────────────────
 
@@ -195,8 +217,7 @@ class AiLimitTray:
 
         def _worker():
             info = updater_win.fetch_latest_release_info()
-            with self._pending_lock:
-                self._pending = ("update_check", info)
+            self._queue_pending("update_check", info)
 
         threading.Thread(target=_worker, daemon=True).start()
 
@@ -215,39 +236,55 @@ class AiLimitTray:
                 result = {"ok": False, "reason": e.reason, "detail": e.detail, "source": info.get("source")}
             except Exception as e:
                 result = {"ok": False, "reason": "unknown", "detail": str(e), "source": info.get("source")}
-            with self._pending_lock:
-                self._pending = ("update_download", result)
+            self._queue_pending("update_download", result)
 
         threading.Thread(target=_worker, daemon=True).start()
 
     # ── 后台抓取 / 主线程接力 ──────────────────────────────────────────────
 
-    def _kick_background_fetch(self):
-        threading.Thread(target=self._async_refresh, daemon=True).start()
-
-    def _async_refresh(self):
-        lang = self._lang()
-        bar_svc = self._state.get("bar_services") or ["claude", "codex"]
-        claude = fetchers.fetch_claude(lang) if "claude" in bar_svc else None
-        codex = fetchers.fetch_codex(lang) if "codex" in bar_svc else None
+    def _queue_pending(self, kind, payload):
         with self._pending_lock:
-            self._pending = ("fetch_result", (claude, codex))
+            self._pending.append((kind, payload))
+
+    def _kick_background_fetch(self):
+        # 托盘和面板是两个独立显示维度；任一处需要就必须抓取。
+        services = set(self._state.get("bar_services") or [])
+        services.update(self._state.get("panel_services") or [])
+        with self._pending_lock:
+            self._fetch_generation += 1
+            generation = self._fetch_generation
+        for service in services:
+            threading.Thread(
+                target=self._async_refresh_service,
+                args=(service, generation),
+                daemon=True,
+            ).start()
+
+    def _async_refresh_service(self, service, generation):
+        lang = self._lang()
+        data = fetchers.fetch_claude(lang) if service == "claude" else fetchers.fetch_codex(lang)
+        self._queue_pending("fetch_service", (generation, service, data))
 
     def _apply_pending(self):
         with self._pending_lock:
-            pending = self._pending
-            self._pending = None
+            pending = self._pending.pop(0) if self._pending else None
         if pending is None:
             return
         kind, payload = pending
-        if kind == "fetch_result":
-            claude, codex = payload
-            if claude is not None:
-                self._claude = claude
-            if codex is not None:
-                self._codex = codex
+        if kind == "fetch_service":
+            generation, service, data = payload
+            with self._pending_lock:
+                if generation != self._fetch_generation:
+                    return
+            if service == "claude":
+                self._claude = data
+                claude, codex = data, None
+            else:
+                self._codex = data
+                claude, codex = None, data
             state.save_cache(self._claude, self._codex)
             state.append_history(claude, codex)
+            self._last_updated = datetime.datetime.now().astimezone()
             self._render()
         elif kind == "update_check":
             lang = self._lang()
@@ -323,8 +360,16 @@ class AiLimitTray:
         claude = self._claude or {}
         codex = self._codex or {}
 
+        self._panel.set_data(
+            self._claude,
+            self._codex,
+            lang,
+            self._state.get("refresh_min", 1),
+            self._last_updated,
+        )
+
         if "error" in claude:
-            self._claude_icon.setIcon(render_service_icon(None, True, dark))
+            self._claude_icon.setIcon(render_service_icon(None, True, dark, "claude"))
             self._claude_icon.setToolTip(f"Claude Code — {claude['error']}")
             self._claude_detail_action.setText(f"Claude Code ⚠ {claude['error']}")
         elif claude:
@@ -332,13 +377,13 @@ class AiLimitTray:
             reset = (fetchers.fmt_reset_iso(claude["5h_reset"], lang) if mode == "5h"
                      else fetchers.fmt_reset_iso(claude["7d_reset"], lang))
             plan = fetchers._fmt_plan(claude.get("plan"), lang)
-            self._claude_icon.setIcon(render_service_icon(pct, False, dark))
+            self._claude_icon.setIcon(render_service_icon(pct, False, dark, "claude"))
             tip = f"Claude Code{plan}  {mode}: {pct}%  {tr(lang, '重置', 'reset')} {reset}"
             self._claude_icon.setToolTip(tip)
             self._claude_detail_action.setText(tip)
 
         if "error" in codex:
-            self._codex_icon.setIcon(render_service_icon(None, True, dark))
+            self._codex_icon.setIcon(render_service_icon(None, True, dark, "codex"))
             self._codex_icon.setToolTip(f"Codex — {codex['error']}")
             self._codex_detail_action.setText(f"Codex ⚠ {codex['error']}")
         elif codex:
@@ -349,14 +394,28 @@ class AiLimitTray:
                      else fetchers.fmt_reset_epoch(codex["7d_reset"], lang))
             plan = fetchers._fmt_plan(codex.get("plan"), lang)
             label = "?" if pct is None else str(pct)
-            self._codex_icon.setIcon(render_service_icon(pct, False, dark))
+            self._codex_icon.setIcon(render_service_icon(pct, False, dark, "codex"))
             tip = f"Codex{plan}  {mode}: {label}%  {tr(lang, '重置', 'reset')} {reset}"
             self._codex_icon.setToolTip(tip)
             self._codex_detail_action.setText(tip)
 
 
 def main():
+    # 显式声明 Per-Monitor-V2 DPI 感知，必须在 QApplication 构造前调用——
+    # 不声明的话，未声明 DPI 感知的旧式进程会被系统整体拉伸渲染结果来
+    # "凑合适配"当前缩放比例，托盘图标这种小尺寸位图会被拉出明显的模糊
+    # （2026-07-19 实测踩过，跟 icon_render.py 的多分辨率修复是两个独立
+    # 但会叠加的模糊成因，见 docs/reference/lessons.md）。
+    try:
+        import ctypes
+        ctypes.windll.shcore.SetProcessDpiAwareness(2)  # PROCESS_PER_MONITOR_DPI_AWARE
+    except Exception:
+        pass
     app = QApplication(sys.argv)
+    base_font = QFont("Microsoft YaHei UI")
+    base_font.setPointSizeF(9.0)
+    base_font.setHintingPreference(QFont.HintingPreference.PreferFullHinting)
+    app.setFont(base_font)
     app.setQuitOnLastWindowClosed(False)
     if not QSystemTrayIcon.isSystemTrayAvailable():
         print("System tray not available on this system.", file=sys.stderr)
