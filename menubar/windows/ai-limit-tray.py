@@ -8,9 +8,7 @@ v1 范围（已实现）：Claude/Codex 用量图标 + 详情菜单、5h/7d 显�
 刷新频率、语言切换、开机自启、检查更新（完整下载+签名校验+触发
 Inno Setup 静默安装+自动重启，见 updater_win.py）。
 
-v1 暂缺（后续增量）：mac 版的服务状态监控子菜单（Claude/Codex Status
-Page 组件级勾选）、菜单栏样式切换（number-only/battery-only，v1 图标
-固定用"电池条+数字"组合样式）。
+菜单栏样式固定用"电池条+数字"组合；服务状态支持 Statuspage 组件级勾选。
 """
 import pathlib
 import sys
@@ -27,7 +25,10 @@ from PySide6.QtCore import QPoint, QTimer
 from PySide6.QtGui import QAction, QActionGroup, QFont
 from PySide6.QtWidgets import QApplication, QMenu, QSystemTrayIcon
 
-from usage import __version__, epoch_to_local  # noqa: F401  (epoch_to_local re-exported for fetchers)
+from usage import (
+    __version__, epoch_to_local,  # noqa: F401  (epoch_to_local re-exported for fetchers)
+    CLAUDE_STATUS_PAGE_URL, CODEX_STATUS_PAGE_URL,
+)
 import state
 from lang_win import detect_system_lang, tr
 from icon_render import render_service_icon, render_placeholder_icon, is_dark_taskbar
@@ -48,11 +49,17 @@ class AiLimitTray:
         self._app = app
         self._state = state.load_state()
         self._claude, self._codex = state.load_cache()
+        self._claude_status_raw = None
+        self._codex_status_raw = None
         self._last_updated = None
 
         self._pending = []
         self._pending_lock = threading.Lock()
         self._fetch_generation = 0
+        self._fetch_inflight = set()
+        self._last_fetch_started = {}
+        self._status_inflight = set()
+        self._last_status_started = {}
 
         self._claude_icon = QSystemTrayIcon()
         self._codex_icon = QSystemTrayIcon()
@@ -67,6 +74,7 @@ class AiLimitTray:
         self._codex_icon.setContextMenu(self._menu)
 
         self._panel = UsagePanel(self, is_dark_taskbar())
+        self._menu.aboutToHide.connect(self._settings_menu_closed)
         self._claude_icon.activated.connect(
             lambda reason: self._toggle_panel(self._claude_icon, reason)
         )
@@ -102,6 +110,7 @@ class AiLimitTray:
                      f"Still on {__version__}; the last update targeted {result.get('target_version', '?')}. "
                      "You can update manually from the download page."),
             tr(lang, "好", "OK"),
+            parent=self._panel,
         )
 
     # ── 状态辅助 ──────────────────────────────────────────────────────────
@@ -124,10 +133,17 @@ class AiLimitTray:
 
     def refresh_from_panel(self):
         self._panel.set_refreshing(self._lang())
-        self._kick_background_fetch()
+        if not self._kick_background_fetch():
+            self._render()
 
     def show_settings_menu(self, position: QPoint):
         self._menu.popup(position)
+
+    def _settings_menu_closed(self):
+        # Opening the menu already deactivates the panel. The menu's close does
+        # not produce a second WindowDeactivate event, so hide explicitly here.
+        if self._panel.isVisible():
+            self._panel.hide()
 
     # ── 菜单构建 ──────────────────────────────────────────────────────────
 
@@ -143,14 +159,62 @@ class AiLimitTray:
         m.addSeparator()
 
         mode_menu = m.addMenu(tr(lang, "显示周期", "Display Window"))
-        mode_group = QActionGroup(mode_menu)
-        mode_group.setExclusive(True)
+        self._window_actions = {}
+        selected_windows = self._state.get("display_windows") or ["5h"]
         for mode, label in (("5h", tr(lang, "5 小时", "5-hour")), ("7d", tr(lang, "7 天", "7-day"))):
             act = mode_menu.addAction(label)
             act.setCheckable(True)
-            act.setChecked(self._state.get("global") == mode)
-            act.triggered.connect(lambda checked, m=mode: self._set_mode(m))
-            mode_group.addAction(act)
+            act.setChecked(mode in selected_windows)
+            act.triggered.connect(lambda checked, m=mode: self._toggle_window(m, checked))
+            self._window_actions[mode] = act
+
+        bar_menu = m.addMenu(tr(lang, "托盘图标", "Tray Icons"))
+        self._bar_service_actions = {}
+        bar_services = self._state.get("bar_services") or ["claude", "codex"]
+        for service, label in (("claude", "Claude Code"), ("codex", "Codex")):
+            act = bar_menu.addAction(label)
+            act.setCheckable(True)
+            act.setChecked(service in bar_services)
+            act.triggered.connect(
+                lambda checked, svc=service: self._toggle_service("bar_services", svc, checked)
+            )
+            self._bar_service_actions[service] = act
+
+        panel_menu = m.addMenu(tr(lang, "面板内容", "Panel Content"))
+        self._panel_service_actions = {}
+        panel_services = self._state.get("panel_services") or []
+        for service, label in (("claude", "Claude Code"), ("codex", "Codex")):
+            act = panel_menu.addAction(label)
+            act.setCheckable(True)
+            act.setChecked(service in panel_services)
+            act.triggered.connect(
+                lambda checked, svc=service: self._toggle_service("panel_services", svc, checked)
+            )
+            self._panel_service_actions[service] = act
+
+        status_menu = m.addMenu(tr(lang, "服务状态", "Service Status"))
+        self._status_actions = {"claude": {}, "codex": {}}
+        status_specs = (
+            ("claude", "Claude Code", state.CLAUDE_STATUS_ALL,
+             CLAUDE_STATUS_PAGE_URL),
+            ("codex", "Codex", state.CODEX_STATUS_ALL,
+             CODEX_STATUS_PAGE_URL),
+        )
+        for service, label, all_components, page_url in status_specs:
+            submenu = status_menu.addMenu(label)
+            open_status = submenu.addAction(tr(lang, "打开官方状态页", "Open Official Status Page"))
+            open_status.triggered.connect(lambda checked=False, url=page_url: webbrowser.open(url))
+            submenu.addSeparator()
+            selected = self._state.get(f"{service}_status_components") or []
+            for component in all_components:
+                act = submenu.addAction(component)
+                act.setCheckable(True)
+                act.setChecked(component in selected)
+                act.triggered.connect(
+                    lambda checked, svc=service, name=component:
+                    self._toggle_status_component(svc, name, checked)
+                )
+                self._status_actions[service][component] = act
 
         refresh_menu = m.addMenu(tr(lang, "刷新频率", "Refresh Interval"))
         refresh_group = QActionGroup(refresh_menu)
@@ -191,8 +255,51 @@ class AiLimitTray:
         quit_act = m.addAction(tr(lang, "退出", "Quit"))
         quit_act.triggered.connect(self._app.quit)
 
-    def _set_mode(self, mode):
-        self._state["global"] = mode
+    def _toggle_window(self, mode, checked):
+        selected = list(self._state.get("display_windows") or ["5h"])
+        if checked:
+            if mode not in selected:
+                selected.append(mode)
+        elif mode in selected:
+            if len(selected) == 1:
+                self._window_actions[mode].setChecked(True)
+                return
+            selected.remove(mode)
+        selected = [candidate for candidate in ("5h", "7d") if candidate in selected]
+        self._state["display_windows"] = selected
+        # A tray icon can show one number. Prefer 5h when both are selected;
+        # when only one is selected, use that period.
+        self._state["global"] = selected[0]
+        state.save_state(self._state)
+        self._render()
+
+    def _toggle_service(self, key, service, checked):
+        selected = list(self._state.get(key) or [])
+        if checked:
+            if service not in selected:
+                selected.append(service)
+        elif service in selected:
+            if key == "bar_services" and len(selected) == 1:
+                self._bar_service_actions[service].setChecked(True)
+                return
+            selected.remove(service)
+        selected = [candidate for candidate in ("claude", "codex") if candidate in selected]
+        self._state[key] = selected
+        state.save_state(self._state)
+        if key == "bar_services":
+            self._update_visibility()
+        self._render()
+
+    def _toggle_status_component(self, service, component, checked):
+        key = f"{service}_status_components"
+        all_components = (state.CLAUDE_STATUS_ALL if service == "claude"
+                          else state.CODEX_STATUS_ALL)
+        selected = list(self._state.get(key) or [])
+        if checked and component not in selected:
+            selected.append(component)
+        elif not checked and component in selected:
+            selected.remove(component)
+        self._state[key] = [name for name in all_components if name in selected]
         state.save_state(self._state)
         self._render()
 
@@ -250,20 +357,50 @@ class AiLimitTray:
         # 托盘和面板是两个独立显示维度；任一处需要就必须抓取。
         services = set(self._state.get("bar_services") or [])
         services.update(self._state.get("panel_services") or [])
+        now = datetime.datetime.now().timestamp()
+        to_fetch = []
+        status_to_fetch = []
         with self._pending_lock:
-            self._fetch_generation += 1
-            generation = self._fetch_generation
-        for service in services:
+            retry_until = self._state.get("oauth_retry_until") or {}
+            for service in services:
+                if (service not in self._status_inflight and
+                        now - float(self._last_status_started.get(service, 0)) >= 55):
+                    self._status_inflight.add(service)
+                    self._last_status_started[service] = now
+                    status_to_fetch.append(service)
+                if (service not in self._fetch_inflight and
+                        now >= float(retry_until.get(service, 0)) and
+                        now - float(self._last_fetch_started.get(service, 0)) >= 55):
+                    self._fetch_inflight.add(service)
+                    self._last_fetch_started[service] = now
+                    to_fetch.append(service)
+            if not to_fetch and not status_to_fetch:
+                return False
+            if to_fetch:
+                self._fetch_generation += 1
+                generation = self._fetch_generation
+        for service in to_fetch:
             threading.Thread(
                 target=self._async_refresh_service,
                 args=(service, generation),
                 daemon=True,
             ).start()
+        for service in status_to_fetch:
+            threading.Thread(
+                target=self._async_refresh_status,
+                args=(service,),
+                daemon=True,
+            ).start()
+        return True
 
     def _async_refresh_service(self, service, generation):
         lang = self._lang()
         data = fetchers.fetch_claude(lang) if service == "claude" else fetchers.fetch_codex(lang)
         self._queue_pending("fetch_service", (generation, service, data))
+
+    def _async_refresh_status(self, service):
+        current_status = fetchers.fetch_service_status(service)
+        self._queue_pending("status_service", (service, current_status))
 
     def _apply_pending(self):
         with self._pending_lock:
@@ -274,8 +411,30 @@ class AiLimitTray:
         if kind == "fetch_service":
             generation, service, data = payload
             with self._pending_lock:
+                self._fetch_inflight.discard(service)
                 if generation != self._fetch_generation:
                     return
+            if data.get("transient"):
+                retry_after = max(60, int(data.get("retry_after") or 120))
+                retry_until = dict(self._state.get("oauth_retry_until") or {})
+                retry_until[service] = datetime.datetime.now().timestamp() + retry_after
+                self._state["oauth_retry_until"] = retry_until
+                state.save_state(self._state)
+                if service == "claude":
+                    self._claude = data
+                    claude, codex = data, None
+                else:
+                    self._codex = data
+                    claude, codex = None, data
+                state.save_cache(self._claude, self._codex)
+                state.append_history(claude, codex)
+                self._render()
+                return
+            retry_until = dict(self._state.get("oauth_retry_until") or {})
+            if service in retry_until:
+                retry_until.pop(service, None)
+                self._state["oauth_retry_until"] = retry_until
+                state.save_state(self._state)
             if service == "claude":
                 self._claude = data
                 claude, codex = data, None
@@ -285,6 +444,15 @@ class AiLimitTray:
             state.save_cache(self._claude, self._codex)
             state.append_history(claude, codex)
             self._last_updated = datetime.datetime.now().astimezone()
+            self._render()
+        elif kind == "status_service":
+            service, current_status = payload
+            with self._pending_lock:
+                self._status_inflight.discard(service)
+            if service == "claude":
+                self._claude_status_raw = current_status
+            else:
+                self._codex_status_raw = current_status
             self._render()
         elif kind == "update_check":
             lang = self._lang()
@@ -296,6 +464,7 @@ class AiLimitTray:
                     tr(lang, "检查更新失败", "Update Check Failed"),
                     tr(lang, "网络不可用或 GitHub/Gitee 均无法访问", "Network unavailable or both GitHub/Gitee unreachable"),
                     tr(lang, "好", "OK"),
+                    parent=self._panel,
                 )
                 return
             latest = info.get("latest", "")
@@ -304,6 +473,7 @@ class AiLimitTray:
                     tr(lang, "已是最新版本", "Up to Date"),
                     tr(lang, f"当前版本 {__version__} 已是最新。", f"Version {__version__} is up to date."),
                     tr(lang, "好", "OK"),
+                    parent=self._panel,
                 )
                 return
             if not info.get("asset_url"):
@@ -315,6 +485,7 @@ class AiLimitTray:
                              f"Current {__version__}, latest {latest}, but no Windows installer asset found. Open download page?"),
                     tr(lang, "打开下载页", "Open Download Page"),
                     tr(lang, "取消", "Cancel"),
+                    parent=self._panel,
                 )
                 if opened:
                     page = _GITEE_PAGE if info.get("source") == "gitee" else _GITHUB_PAGE
@@ -326,6 +497,7 @@ class AiLimitTray:
                          f"Current {__version__}, latest {latest}. Update now? The app will quit and restart."),
                 tr(lang, "立即更新", "Update Now"),
                 tr(lang, "取消", "Cancel"),
+                parent=self._panel,
             )
             if confirmed:
                 self._check_update_action.setEnabled(False)
@@ -346,6 +518,7 @@ class AiLimitTray:
                          f"Automatic update did not complete ({detail}). Open the download page to install manually?"),
                 tr(lang, "打开下载页", "Open Download Page"),
                 tr(lang, "取消", "Cancel"),
+                parent=self._panel,
             )
             if opened:
                 page = _GITEE_PAGE if payload.get("source") == "gitee" else _GITHUB_PAGE
@@ -355,16 +528,30 @@ class AiLimitTray:
 
     def _render(self):
         lang = self._lang()
-        mode = self._state.get("global", "5h")
+        selected_windows = self._state.get("display_windows") or ["5h"]
+        mode = selected_windows[0]
         dark = is_dark_taskbar()
         claude = self._claude or {}
         codex = self._codex or {}
+        claude_status = fetchers.status_info(
+            self._claude_status_raw,
+            self._state.get("claude_status_components") or [],
+            lang,
+        )
+        codex_status = fetchers.status_info(
+            self._codex_status_raw,
+            self._state.get("codex_status_components") or [],
+            lang,
+        )
 
         self._panel.set_data(
             self._claude,
             self._codex,
+            claude_status,
+            codex_status,
             lang,
             self._state.get("refresh_min", 1),
+            selected_windows,
             self._last_updated,
         )
 
@@ -401,16 +588,11 @@ class AiLimitTray:
 
 
 def main():
-    # 显式声明 Per-Monitor-V2 DPI 感知，必须在 QApplication 构造前调用——
-    # 不声明的话，未声明 DPI 感知的旧式进程会被系统整体拉伸渲染结果来
-    # "凑合适配"当前缩放比例，托盘图标这种小尺寸位图会被拉出明显的模糊
-    # （2026-07-19 实测踩过，跟 icon_render.py 的多分辨率修复是两个独立
-    # 但会叠加的模糊成因，见 docs/reference/lessons.md）。
-    try:
-        import ctypes
-        ctypes.windll.shcore.SetProcessDpiAwareness(2)  # PROCESS_PER_MONITOR_DPI_AWARE
-    except Exception:
-        pass
+    show_panel = "--show-panel" in sys.argv
+    if show_panel:
+        sys.argv.remove("--show-panel")
+    # Qt 6 在 QApplication 构造时默认启用 Per-Monitor-V2。不要提前调用旧的
+    # SetProcessDpiAwareness，否则 Qt 的设置会被 Windows 以 Access Denied 拒绝。
     app = QApplication(sys.argv)
     base_font = QFont("Microsoft YaHei UI")
     base_font.setPointSizeF(9.0)
@@ -421,6 +603,8 @@ def main():
         print("System tray not available on this system.", file=sys.stderr)
         sys.exit(1)
     tray = AiLimitTray(app)  # noqa: F841  (kept alive by local ref through app.exec loop)
+    if show_panel:
+        QTimer.singleShot(2500, lambda: tray._panel.toggle_near(tray._claude_icon))
     sys.exit(app.exec())
 
 

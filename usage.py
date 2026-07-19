@@ -58,7 +58,7 @@ if IS_WINDOWS:
     except Exception:
         pass
 
-_C   = sys.stdout.isatty()
+_C   = bool(sys.stdout and sys.stdout.isatty())
 _DIM = "\033[2m" if _C else ""
 _BOLD= "\033[1m" if _C else ""
 _RST = "\033[0m" if _C else ""

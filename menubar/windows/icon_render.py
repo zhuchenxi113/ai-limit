@@ -4,9 +4,9 @@ Windows 任务栏图标是纯位图（不像 macOS 状态栏那样能放任意�
 一个图标位显示不下"Claude 68%  CodeX 99%"这种并排文字，所以每个服务
 （Claude / Codex）各用一个独立的 QSystemTrayIcon。图标使用电池框内数字，
 内部色块从左到右填满剩余额度；Claude 固定品牌橙色，Codex 随任务栏深浅切换白/深灰。
-百分号和完整标签文字放 tooltip 里（hover 时看）。
-
-WARN_THRESHOLD/CRIT_THRESHOLD 阈值配色跟 usage.py 的 CLI 版一致（30/60 行）。
+百分号和完整标签文字放 tooltip 里（hover 时看）。正常额度只通过填充宽度
+表达消耗量：Claude 始终使用品牌橙色，Codex 始终使用任务栏适配的黑/白，
+两者都不因额度高低变色；只有抓取失败的感叹号图标使用警告色。
 
 **多分辨率坑（2026-07-19 实测踩过）**：早期实现固定按 "size=32 逻辑像素 +
 devicePixelRatio=2.0" 画一张图再让 Qt 缩放到系统实际需要的尺寸。这里的
@@ -33,28 +33,14 @@ logical=20 实际要的是 25px 的图，logical=24 要的是 30px——25、30 
 from PySide6.QtCore import Qt, QRectF
 from PySide6.QtGui import QColor, QFont, QIcon, QPainter, QPixmap
 
-WARN_THRESHOLD = 20
-CRIT_THRESHOLD = 10
-
 _COLOR_CLAUDE = QColor("#d97757")
 _COLOR_CODEX_DARK = QColor("#f2f2f2")
 _COLOR_CODEX_LIGHT = QColor("#202123")
-_COLOR_OK   = QColor("#2fae4a")
-_COLOR_WARN = QColor("#e0a020")
-_COLOR_CRIT = QColor("#d94f4f")
-_COLOR_ERR  = QColor("#9a9a9a")
+_COLOR_ERR  = QColor("#e0a020")
 
 # 密集覆盖 14~64px 每个整数物理像素尺寸，不猜测 Qt 内部换算后具体会落在
 # 哪一档（见上方 docstring 的二轮诊断），保证任何请求都能精确命中原生渲染。
 _ICON_SIZES = tuple(range(14, 65))
-
-
-def _fill_color(pct: int) -> QColor:
-    if pct >= WARN_THRESHOLD:
-        return _COLOR_OK
-    if pct >= CRIT_THRESHOLD:
-        return _COLOR_WARN
-    return _COLOR_CRIT
 
 
 def _service_color(service: str, dark_mode: bool) -> QColor:
@@ -112,8 +98,8 @@ def _paint_battery(painter: QPainter, size: int, pct, err: bool, fg: QColor):
         fill_w = inner.width() * max(0, min(100, pct)) / 100
         fill_rect = QRectF(inner.left(), inner.top(), fill_w, inner.height())
         painter.setPen(Qt.PenStyle.NoPen)
-        # 正常状态沿用服务识别色；只在额度偏低时切换警告色。
-        fill_color = QColor(fg if pct >= WARN_THRESHOLD else _fill_color(pct))
+        # 额度只改变填充宽度，不改变服务识别色。
+        fill_color = QColor(fg)
         painter.setBrush(fill_color)
         painter.drawRoundedRect(fill_rect, size * 0.045, size * 0.045)
 

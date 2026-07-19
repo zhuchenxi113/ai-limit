@@ -17,12 +17,80 @@ from usage import (
     TZ_LOCAL,
     epoch_to_local,
     fetch_status_components,
+    worst_status,
+    CLAUDE_STATUS_COMPONENTS_URL,
+    CODEX_STATUS_COMPONENTS_URL,
 )
 
 from lang_win import tr as _tr
+from oauth_usage import (
+    ClaudeOAuthError,
+    CodexOAuthError,
+    live_claude_oauth_usage,
+    live_codex_oauth_usage,
+)
 
 _ZH_WEEKDAYS = "一二三四五六日"
 _EN_WEEKDAYS = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
+
+_STATUS_COLORS = {
+    "operational": "#3b9b47",
+    "under_maintenance": "#2c84db",
+    "degraded_performance": "#c78d00",
+    "partial_outage": "#d65a31",
+    "major_outage": "#c42b1c",
+    "critical": "#c42b1c",
+    "unknown": "#777777",
+    "loading": "#777777",
+}
+
+
+def fetch_service_status(service: str):
+    """Fetch a full, current Statuspage component list for one provider."""
+    url = (CLAUDE_STATUS_COMPONENTS_URL if service == "claude"
+           else CODEX_STATUS_COMPONENTS_URL)
+    components = fetch_status_components(url)
+    return components if components is not None else "unknown"
+
+
+def status_info(raw_status, selected_names: list[str], lang: str):
+    """Format the worst selected component for the Windows panel."""
+    if not selected_names:
+        return None
+    if raw_status is None:
+        return {
+            "text": _tr(lang, "正在获取状态…", "Fetching status…"),
+            "status": "loading",
+            "color": _STATUS_COLORS["loading"],
+        }
+    if raw_status == "unknown":
+        return {
+            "text": _tr(lang, "状态未知", "Status unknown"),
+            "status": "unknown",
+            "color": _STATUS_COLORS["unknown"],
+        }
+    result = worst_status(raw_status, selected_names)
+    if result is None:
+        return {
+            "text": _tr(lang, "状态未知", "Status unknown"),
+            "status": "unknown",
+            "color": _STATUS_COLORS["unknown"],
+        }
+    status, component = result
+    labels = {
+        "operational": _tr(lang, "状态正常", "Operational"),
+        "under_maintenance": _tr(lang, "维护中", "Maintenance"),
+        "degraded_performance": _tr(lang, "性能下降", "Degraded"),
+        "partial_outage": _tr(lang, "部分中断", "Partial outage"),
+        "major_outage": _tr(lang, "服务中断", "Outage"),
+        "critical": _tr(lang, "服务中断", "Outage"),
+    }
+    return {
+        "text": labels.get(status, _tr(lang, "状态未知", "Status unknown")),
+        "status": status,
+        "component": component,
+        "color": _STATUS_COLORS.get(status, _STATUS_COLORS["unknown"]),
+    }
 
 
 def _fmt_plan(plan, lang="zh"):
@@ -77,21 +145,47 @@ def window_shorthand(window_minutes):
     return f"{round(hours / 24)}d"
 
 
+def _oauth_error(error, lang):
+    kind = getattr(error, "kind", "generic")
+    if kind == "rate_limit":
+        return {
+            "error": _tr(lang, "请求过于频繁，稍后自动重试", "Too many requests; retrying later"),
+            "transient": True,
+            "retry_after": getattr(error, "retry_after", None) or 300,
+        }
+    if kind == "network":
+        return {"error": _tr(lang,
+            "OAuth 网络请求失败，请检查网络后重试",
+            "OAuth network request failed; check your connection and retry"),
+            "transient": True,
+            "retry_after": 60}
+    return {"error": f"OAuth: {error}", "transient": True,
+            "retry_after": getattr(error, "retry_after", None) or 120}
+
+
 def fetch_claude(lang):
     try:
-        data = live_claude_usage()
+        try:
+            data, plan = live_claude_oauth_usage()
+            source = "oauth"
+        except ClaudeOAuthError as oauth_error:
+            if getattr(oauth_error, "kind", "generic") != "auth":
+                return _oauth_error(oauth_error, lang)
+            data = live_claude_usage()
+            source = "web"
+            try:
+                plan = live_claude_plan()
+            except Exception:
+                plan = None
         five_h = data.get("five_hour") or {}
         seven_d = data.get("seven_day") or {}
-        try:
-            plan = live_claude_plan()
-        except Exception:
-            plan = None
         return {
             "5h_left":  int(round(100 - float(five_h.get("utilization", 0)))),
             "7d_left":  int(round(100 - float(seven_d.get("utilization", 0)))),
             "5h_reset": five_h.get("resets_at"),
             "7d_reset": seven_d.get("resets_at"),
             "plan":     plan,
+            "source":   source,
         }
     except ClaudeWebError as e:
         kind = getattr(e, "kind", "generic")
@@ -119,7 +213,14 @@ def fetch_claude(lang):
 
 def fetch_codex(lang):
     try:
-        _ts, rl = live_codex_web_usage()
+        try:
+            _ts, rl = live_codex_oauth_usage()
+            source = "oauth"
+        except CodexOAuthError as oauth_error:
+            if getattr(oauth_error, "kind", "generic") != "auth":
+                return _oauth_error(oauth_error, lang)
+            _ts, rl = live_codex_web_usage()
+            source = "web"
         short_win, long_win = _classify_codex_windows(rl)
         return {
             "5h_left":  int(round(100 - short_win.get("used_percent", 0))) if short_win else None,
@@ -129,7 +230,7 @@ def fetch_codex(lang):
             "5h_label": window_shorthand(short_win.get("window_minutes")) if short_win else "5h",
             "7d_label": window_shorthand(long_win.get("window_minutes")) if long_win else "7d",
             "plan":     rl.get("plan_type") or "?",
-            "source":   "web",
+            "source":   source,
         }
     except CodexAuthError:
         return {"error": _tr(lang,

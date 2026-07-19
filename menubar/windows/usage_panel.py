@@ -3,8 +3,8 @@ import ctypes
 import datetime
 import webbrowser
 
-from PySide6.QtCore import QPoint, QRectF, Qt
-from PySide6.QtGui import QActionGroup, QColor, QFont, QPainter, QPainterPath, QPen
+from PySide6.QtCore import QEvent, QPoint, QRectF, Qt, QTimer, Signal
+from PySide6.QtGui import QColor, QCursor, QFont, QPainter, QPainterPath, QPen
 from PySide6.QtWidgets import (
     QApplication,
     QFrame,
@@ -18,7 +18,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from usage import __version__
+from usage import __version__, CLAUDE_STATUS_PAGE_URL, CODEX_STATUS_PAGE_URL
 import fetchers
 from lang_win import tr
 
@@ -42,7 +42,7 @@ def _apply_windows_surface(widget: QWidget, dark: bool) -> None:
 
 def _draw_icon(painter: QPainter, kind: str, rect: QRectF, color: QColor) -> None:
     painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
-    pen = QPen(color, 1.8, Qt.PenStyle.SolidLine,
+    pen = QPen(color, 1.35, Qt.PenStyle.SolidLine,
                Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin)
     painter.setPen(pen)
     painter.setBrush(Qt.BrushStyle.NoBrush)
@@ -60,7 +60,7 @@ def _draw_icon(painter: QPainter, kind: str, rect: QRectF, color: QColor) -> Non
         painter.setPen(Qt.PenStyle.NoPen)
         painter.setBrush(color)
         for dx in (-5.5, 0, 5.5):
-            painter.drawEllipse(QRectF(center.x() + dx - 1.2, center.y() - 1.2, 2.4, 2.4))
+            painter.drawEllipse(QRectF(center.x() + dx - 1.0, center.y() - 1.0, 2.0, 2.0))
     elif kind == "external":
         painter.drawRoundedRect(QRectF(center.x() - 6, center.y() - 4, 9.5, 9.5), 1, 1)
         path = QPainterPath()
@@ -103,6 +103,50 @@ class LinkButton(QPushButton):
         _draw_icon(painter, "external", QRectF(8, 7, 20, 20), self._color)
 
 
+class StatusLink(QWidget):
+    """Borderless, clickable status label with a separately colored dot."""
+    clicked = Signal()
+
+    def __init__(self, palette: dict, parent=None):
+        super().__init__(parent)
+        self._palette = palette
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setAttribute(Qt.WidgetAttribute.WA_Hover, True)
+        row = QHBoxLayout(self)
+        row.setContentsMargins(0, 0, 0, 0)
+        row.setSpacing(3)
+        self.prefix = QLabel()
+        self.prefix.setObjectName("statusPrefix")
+        self.dot = QLabel("●")
+        self.dot.setObjectName("statusDot")
+        row.addWidget(self.prefix)
+        row.addWidget(self.dot)
+
+    def set_status(self, info: dict, lang: str) -> None:
+        self.prefix.setText(tr(lang, "状态：", "Status:"))
+        self.dot.setStyleSheet(f"color: {info['color']}; font-size: 9pt;")
+        detail = info["text"]
+        if info.get("component"):
+            detail += f" · {info['component']}"
+        self.setToolTip(detail)
+
+    def enterEvent(self, event) -> None:
+        self.prefix.setStyleSheet(f"color: {self._palette['fg']};")
+        super().enterEvent(event)
+
+    def leaveEvent(self, event) -> None:
+        self.prefix.setStyleSheet("")
+        super().leaveEvent(event)
+
+    def mouseReleaseEvent(self, event) -> None:
+        if (event.button() == Qt.MouseButton.LeftButton and
+                self.rect().contains(event.position().toPoint())):
+            self.clicked.emit()
+            event.accept()
+            return
+        super().mouseReleaseEvent(event)
+
+
 class UsageRow(QWidget):
     def __init__(self, palette: dict, parent=None):
         super().__init__(parent)
@@ -143,7 +187,8 @@ class UsageRow(QWidget):
 
 
 class ServiceSection(QFrame):
-    def __init__(self, name: str, color: str, palette: dict, parent=None):
+    def __init__(self, name: str, color: str, palette: dict,
+                 status_page_url: str, parent=None):
         super().__init__(parent)
         self._color = color
         box = QVBoxLayout(self)
@@ -155,9 +200,12 @@ class ServiceSection(QFrame):
         self.title.setObjectName("serviceTitle")
         self.plan = QLabel()
         self.plan.setObjectName("planBadge")
+        self.status = StatusLink(palette)
+        self.status.clicked.connect(lambda: webbrowser.open(status_page_url))
         header.addWidget(self.title)
         header.addWidget(self.plan)
         header.addStretch()
+        header.addWidget(self.status)
         box.addLayout(header)
         self.error = QLabel()
         self.error.setObjectName("error")
@@ -167,9 +215,16 @@ class ServiceSection(QFrame):
         for row in self.rows:
             box.addWidget(row)
 
-    def set_data(self, data, lang: str, is_claude: bool) -> None:
+    def set_data(self, data, status_info, lang: str, is_claude: bool,
+                 selected_windows: list[str]) -> None:
+        if status_info:
+            self.status.set_status(status_info, lang)
+            self.status.show()
+        else:
+            self.status.hide()
         if data is None:
             self.error.setProperty("hasError", False)
+            self.error.setProperty("isWarning", False)
             self.error.setText(tr(lang, "正在获取真实数据…", "Fetching live data…"))
             self.error.setVisible(True)
             self.plan.hide()
@@ -181,6 +236,7 @@ class ServiceSection(QFrame):
 
         error = data.get("error")
         self.error.setProperty("hasError", bool(error))
+        self.error.setProperty("isWarning", bool(error and data.get("transient")))
         self.error.setVisible(bool(error))
         for row in self.rows:
             row.setVisible(not error)
@@ -194,7 +250,7 @@ class ServiceSection(QFrame):
         raw_plan = data.get("plan")
         plan = "" if not raw_plan or raw_plan == "?" else str(raw_plan).replace("_", " ").title()
         if data.get("source") == "snapshot":
-            source = tr(lang, "本地快照", "Local snapshot")
+            source = tr(lang, "缓存", "Cached")
             plan = f"{plan} · {source}" if plan else source
         self.plan.setText(plan)
         self.plan.setVisible(bool(plan))
@@ -210,6 +266,7 @@ class ServiceSection(QFrame):
                 reset = reset_formatter(data.get(f"{key}_reset"), lang)
                 reset_text = tr(lang, f"重置 {reset}", f"Reset {reset}")
             row.update_value(label, pct, reset_text, self._color)
+            row.setVisible(key in selected_windows)
 
 
 class UsagePanel(QWidget):
@@ -217,6 +274,7 @@ class UsagePanel(QWidget):
         super().__init__()
         self._tray = tray
         self._dark = dark
+        self._anchor_point = None
         self.setWindowTitle("AI Limit")
         self.setWindowFlags(Qt.WindowType.Tool | Qt.WindowType.FramelessWindowHint |
                             Qt.WindowType.WindowStaysOnTopHint)
@@ -256,14 +314,18 @@ class UsagePanel(QWidget):
         header.addWidget(self.more_button)
         layout.addLayout(header)
 
-        self.claude = ServiceSection("Claude Code", "#d97757", self._palette)
+        self.claude = ServiceSection(
+            "Claude Code", "#d97757", self._palette, CLAUDE_STATUS_PAGE_URL
+        )
         layout.addWidget(self.claude)
         divider = QFrame()
         divider.setObjectName("divider")
         divider.setFixedHeight(1)
         layout.addWidget(divider)
         codex_color = "#f2f2f2" if dark else "#202123"
-        self.codex = ServiceSection("Codex", codex_color, self._palette)
+        self.codex = ServiceSection(
+            "Codex", codex_color, self._palette, CODEX_STATUS_PAGE_URL
+        )
         layout.addWidget(self.codex)
 
         links = QHBoxLayout()
@@ -289,29 +351,33 @@ class UsagePanel(QWidget):
             QFrame {{ border: none; background: transparent; }}
             QFrame#divider {{ background: {p['divider']}; }}
             QLabel {{ color: {p['fg']}; font-family: 'Microsoft YaHei UI'; font-size: 9pt; }}
-            QLabel#title {{ font-size: 13pt; font-weight: 600; }}
-            QLabel#serviceTitle {{ font-size: 10pt; font-weight: 600; }}
-            QLabel#quotaValue {{ font-size: 12pt; font-weight: 600; }}
+            QLabel#title {{ font-size: 13pt; font-weight: 500; }}
+            QLabel#serviceTitle {{ font-size: 10pt; font-weight: 500; }}
+            QLabel#quotaValue {{ font-size: 12pt; font-weight: 500; }}
             QLabel#period, QLabel#secondary {{ color: {p['secondary']}; font-size: 8pt; }}
+            QLabel#statusPrefix {{ color: {p['secondary']}; font-size: 8pt; font-weight: 400; }}
             QLabel#error {{ color: {p['secondary']}; font-size: 8pt; padding: 3px 0; }}
             QLabel#error[hasError="true"] {{ color: #c42b1c; }}
+            QLabel#error[isWarning="true"] {{ color: #c78d00; }}
             QLabel#planBadge {{ color: {p['secondary']}; background: {p['control']};
                 border-radius: 5px; padding: 1px 6px; font-size: 8pt; }}
             QPushButton {{ color: {p['fg']}; border: none; font-family: 'Microsoft YaHei UI'; }}
             QPushButton#iconButton {{ background: transparent; border-radius: 6px; }}
             QPushButton#iconButton:hover {{ background: {p['hover']}; }}
             QPushButton#linkButton {{ background: {p['control']}; border: 1px solid {p['border']};
-                border-radius: 7px; padding-left: 20px; font-size: 8pt; font-weight: 600; }}
+                border-radius: 7px; padding-left: 20px; font-size: 8pt; font-weight: 400; }}
             QPushButton#linkButton:hover {{ background: {p['hover']}; }}
         """)
 
-    def set_data(self, claude, codex, lang: str, refresh_minutes: int,
+    def set_data(self, claude, codex, claude_status, codex_status,
+                 lang: str, refresh_minutes: int,
+                 selected_windows: list[str],
                  updated_at: datetime.datetime | None = None) -> None:
         panel_services = self._tray._state.get("panel_services") or []
         self.claude.setVisible("claude" in panel_services)
         self.codex.setVisible("codex" in panel_services)
-        self.claude.set_data(claude, lang, True)
-        self.codex.set_data(codex, lang, False)
+        self.claude.set_data(claude, claude_status, lang, True, selected_windows)
+        self.codex.set_data(codex, codex_status, lang, False, selected_windows)
         if claude is None and codex is None:
             self.updated.setText(tr(lang, "正在获取真实数据…", "Fetching live data…"))
         elif updated_at is None:
@@ -323,6 +389,8 @@ class UsagePanel(QWidget):
                                     f"Updated {stamp} · every {refresh_minutes} min"))
         self.refresh_button.setEnabled(True)
         self.adjustSize()
+        if self.isVisible() and self._anchor_point is not None:
+            self._place_at_anchor()
 
     def set_refreshing(self, lang: str) -> None:
         self.updated.setText(tr(lang, "正在刷新…", "Refreshing…"))
@@ -334,22 +402,44 @@ class UsagePanel(QWidget):
     def _show_menu(self) -> None:
         self._tray.show_settings_menu(self.more_button.mapToGlobal(QPoint(0, self.more_button.height() + 4)))
 
+    def event(self, event) -> bool:
+        result = super().event(event)
+        if event.type() == QEvent.Type.WindowDeactivate:
+            QTimer.singleShot(0, self._hide_after_window_deactivate)
+        return result
+
+    def _hide_after_window_deactivate(self) -> None:
+        menu = getattr(self._tray, "_menu", None)
+        if self.isVisible() and not self.isActiveWindow() and not (menu and menu.isVisible()):
+            self.hide()
+
     def toggle_near(self, icon: QSystemTrayIcon) -> None:
         if self.isVisible():
             self.hide()
             return
-        anchor = icon.geometry()
-        screen = QApplication.screenAt(anchor.center()) if not anchor.isNull() else QApplication.primaryScreen()
-        if screen is None:
-            screen = QApplication.primaryScreen()
-        self.adjustSize()
-        area = screen.availableGeometry()
-        x = anchor.center().x() - self.width() // 2 if not anchor.isNull() else area.right() - self.width()
-        y = anchor.top() - self.height() - 7 if not anchor.isNull() else area.bottom() - self.height()
-        x = max(area.left() + 7, min(x, area.right() - self.width() - 7))
-        y = max(area.top() + 7, min(y, area.bottom() - self.height() - 7))
-        self.move(x, y)
+        self._anchor_point = QCursor.pos()
+        self._place_at_anchor()
         self.show()
         _apply_windows_surface(self, self._dark)
         self.raise_()
         self.activateWindow()
+
+    def _place_at_anchor(self) -> None:
+        anchor = self._anchor_point or QCursor.pos()
+        screen = QApplication.screenAt(anchor)
+        if screen is None:
+            screen = QApplication.primaryScreen()
+        self.adjustSize()
+        area = screen.availableGeometry()
+        x = anchor.x() - self.width() + 28
+        if anchor.y() > screen.geometry().center().y():
+            # Refresh can change the panel height after it is already open.
+            # Recompute from a fixed bottom edge every time so it grows upward,
+            # never down into the taskbar.
+            bottom_edge = min(area.bottom() - 7, anchor.y() - 32)
+            y = bottom_edge - self.height()
+        else:
+            y = max(area.top() + 7, anchor.y() + 32)
+        x = max(area.left() + 7, min(x, area.right() - self.width() - 7))
+        y = max(area.top() + 7, min(y, area.bottom() - self.height() - 7))
+        self.move(x, y)
