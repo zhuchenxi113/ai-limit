@@ -25,17 +25,13 @@ sys.path.insert(0, str(_REPO))
 
 from usage import (
     __version__,
-    live_claude_oauth_usage,
     live_claude_plan,
     live_claude_usage,
-    live_codex_oauth_usage,
     live_codex_web_usage,
     _classify_codex_windows,
     ClaudeWebError,
-    ClaudeOAuthError,
     CodexWebError,
     CodexAuthError,
-    CodexOAuthError,
     TZ_LOCAL,
     epoch_to_local,
     fetch_status_components,
@@ -616,25 +612,19 @@ def _append_history(claude, codex):
 def _fetch_claude(lang):
     import socket, urllib.error
     try:
-        try:
-            data, plan = live_claude_oauth_usage()
-            source = "oauth"
-        except ClaudeOAuthError:
-            data = live_claude_usage()
-            source = "web"
-            try:
-                plan = live_claude_plan()
-            except Exception:
-                plan = None
+        data = live_claude_usage()
         five_h = data.get("five_hour") or {}
         seven_d = data.get("seven_day") or {}
+        try:
+            plan = live_claude_plan()
+        except Exception:
+            plan = None
         return {
             "5h_left":  int(round(100 - float(five_h.get("utilization", 0)))),
             "7d_left":  int(round(100 - float(seven_d.get("utilization", 0)))),
             "5h_reset": five_h.get("resets_at"),
             "7d_reset": seven_d.get("resets_at"),
             "plan":     plan,
-            "source":   source,
         }
     except ClaudeWebError as e:
         kind = getattr(e, "kind", "generic")
@@ -657,12 +647,7 @@ def _fetch_claude(lang):
 def _fetch_codex(lang):
     import socket, urllib.error
     try:
-        try:
-            _ts, rl = live_codex_oauth_usage()
-            source = "oauth"
-        except CodexOAuthError:
-            _ts, rl = live_codex_web_usage()
-            source = "web"
+        _ts, rl = live_codex_web_usage()
         # 按窗口实际时长分类（≤6h 归"短档"，其余归"长档"），不按 primary/secondary
         # 字段位置——2026-07-13 OpenAI 临时移除 5 小时限额后，唯一剩下的窗口出现在
         # primary_window 字段里，但实际时长是 7 天。缺的那一档保留 None，交给渲染层
@@ -677,7 +662,6 @@ def _fetch_codex(lang):
             "5h_label": _window_shorthand(short_win.get("window_minutes")) if short_win else "5h",
             "7d_label": _window_shorthand(long_win.get("window_minutes")) if long_win else "7d",
             "plan":     rl.get("plan_type") or "?",
-            "source":   source,
         }
     except CodexAuthError:
         return {"error": _tr(lang,
@@ -1201,7 +1185,7 @@ class AiLimitApp(rumps.App):
             "Claude Code / CodeX 额度监控" if lang == "zh" else "Claude Code / CodeX quota monitor"
         ))
         self._about_src    = _disable(rumps.MenuItem(
-            "数据来源：OAuth + 官方接口 + 本地日志" if lang == "zh" else "Source: OAuth + official APIs + local logs"
+            "数据来源：本地日志 + 官方网页接口" if lang == "zh" else "Source: local logs + official web endpoints"
         ))
         self._check_update_item = rumps.MenuItem(
             "检查更新" if lang == "zh" else "Check for Updates",
@@ -1606,8 +1590,8 @@ class AiLimitApp(rumps.App):
             "Claude Code / CodeX quota monitor",
         )
         self._about_src.title    = _tr(lang,
-            "数据来源：OAuth + 官方接口 + 本地日志",
-            "Source: OAuth + official APIs + local logs",
+            "数据来源：本地日志 + 官方网页接口",
+            "Source: local logs + official web endpoints",
         )
         if not self._update_checking:
             self._check_update_item.title = _tr(lang, "检查更新", "Check for Updates")
