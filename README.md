@@ -6,7 +6,7 @@ Official downloads: https://github.com/zhuchenxi113/ai-limit/releases
 
 Website: https://ai-limit.waitsugar.com
 
-A lightweight tool to monitor real-time **Claude Code** and **Codex** usage limits, quota consumption, and token statistics — so you can adjust your AI usage before hitting rate limits. Available as a macOS menu bar app, a Windows system tray app, or a CLI (macOS/Windows).
+A lightweight tool to monitor real-time **Claude Code** and **Codex** usage limits, quota consumption, and token statistics — so you can adjust your AI usage before hitting rate limits. Available as a macOS menu bar app or a CLI.
 
 If you find it useful, a Star would be appreciated: [GitHub](https://github.com/zhuchenxi113/ai-limit) · [Gitee](https://gitee.com/zhuchenxi113/ai-limit)
 
@@ -65,32 +65,6 @@ bash make-dmg.sh
 
 ---
 
-## Windows Tray App
-
-Lives in the system taskbar, one icon per service (Claude / Codex), showing a battery-style bar + percentage. Same underlying data-fetch logic as the CLI/macOS app, independently implemented UI (PySide6, since Windows' native tray icon toolkits can't reproduce the rich menu-bar rendering rumps/AppKit gives on macOS).
-
-> **Status: not yet in a signed public release.** Pre-built, code-signed installers aren't published yet (blocked on acquiring a Windows code-signing certificate). Build from source in the meantime — see below.
-
-**Build from source**
-
-```powershell
-pip install -r requirements.txt
-pip install pyinstaller
-cd menubar\windows
-python make_ico.py
-pyinstaller pyinstaller.spec
-# optional: package as an installer (requires Inno Setup: https://jrsoftware.org/isinfo.php)
-& "C:\path\to\Inno Setup 6\ISCC.exe" installer.iss
-```
-
-The unpackaged app can also be run directly for testing: `python menubar\windows\ai-limit-tray.py`.
-
-**Features**: same toggles as the macOS app (display window, refresh interval, language), plus start-at-login (registry `Run` key) and in-app update check.
-
-**Known Windows-specific limitation**: reading Live quota from Chrome/Edge cookies does not work — see [Notes](#notes) below for why, and use Firefox instead if you want Live quota on Windows.
-
----
-
 ## CLI
 
 Output language is detected automatically from your system locale.
@@ -103,11 +77,10 @@ Output language is detected automatically from your system locale.
 
 ### Requirements
 
-- macOS or Windows
+- macOS
 - Python 3.8+
 - Chrome or Firefox signed in to [claude.ai](https://claude.ai) (for Claude quota)
 - Chrome or Firefox signed in to [chatgpt.com](https://chatgpt.com) (recommended path for Codex quota)
-  - **On Windows**, this must be **Firefox**, not Chrome/Edge — see [Notes](#notes) for why
 - Optional: [Codex CLI](https://developers.openai.com/codex/cli) installed and signed in (fallback when browser cookies are unavailable)
 
 ### Usage Prerequisites
@@ -192,7 +165,7 @@ The browser path (1) reuses the same analytics endpoint that powers the chatgpt.
 
 ## Notes
 
-- **Browser cookie reading, macOS vs Windows**: on macOS, Chrome's cookie encryption key lives in the system Keychain, which has a legitimate per-app consent mechanism (the OS prompts you to allow access) — so Chrome/Firefox both work. On Windows, Chrome/Edge (Chromium 127+, since mid-2024) use "App-Bound Encryption", which cryptographically ties cookie decryption to the browser's own signed executable, with no equivalent third-party consent path — so `browser_cookie3` cannot decrypt Chrome/Edge cookies on Windows at all (this is a deliberate anti-malware protection, not a bug on our end; the only known bypass mimics cookie-stealing malware behavior and gets flagged by antivirus, so we don't implement it). **Firefox is unaffected** (it stores cookies unencrypted on disk) and works fine on both platforms — use Firefox for Live quota on Windows.
+- **macOS only**: browser cookie reading relies on the system Keychain to decrypt Chrome cookies
 - **Unofficial API**: Claude quota is fetched from an internal claude.ai endpoint, not an official API — it may break with future updates
 - **Occasional ⚠️ (Cloudflare challenge)**: claude.ai / chatgpt.com may temporarily serve a Cloudflare bot-challenge to non-browser requests (based on TLS fingerprint — even a valid cookie can be blocked), surfaced as a ⚠️. It usually clears on its own. This affects any non-browser tool accessing these sites — the official Claude Code / Codex CLIs hit the same thing — so it is not a defect of ai-limit and generally needs no action. If the warning persists, open the Claude usage page or CodeX dashboard from the menu and **keep the tab open** — the active browser session accelerates recovery
 - `<synthetic>` model entries are error placeholders written by Claude Code on API failures; they are excluded from all statistics

@@ -6,7 +6,7 @@
 
 官网：https://ai-limit.waitsugar.com
 
-查看 Claude Code 和 CodeX 的实时剩余额度与 token 消耗情况。支持 macOS 菜单栏 App、Windows 系统托盘 App 和命令行（macOS/Windows）三种使用方式。
+查看 Claude Code 和 CodeX 的实时剩余额度与 token 消耗情况。支持 macOS 菜单栏 App 和命令行两种使用方式。
 
 如果觉得有用，欢迎给个 Star 鼓励作者：[GitHub](https://github.com/zhuchenxi113/ai-limit) · [Gitee](https://gitee.com/zhuchenxi113/ai-limit)
 
@@ -63,32 +63,6 @@ bash make-dmg.sh
 
 ---
 
-## Windows 系统托盘 App
-
-常驻系统托盘，Claude / Codex 各一个图标，电池条+百分比样式。底层数据抓取逻辑跟 CLI/macOS 版一致，UI 是独立实现（PySide6——Windows 原生托盘图标能力做不出 macOS 菜单栏那种富文本渲染，只能重画）。
-
-> **当前状态：还没有正式签名的公开发布版**。预编译、已签名的安装包还没发布（卡在申请 Windows 代码签名证书这一步）。目前只能自己从源码构建，见下方。
-
-**从源码构建**
-
-```powershell
-pip install -r requirements.txt
-pip install pyinstaller
-cd menubar\windows
-python make_ico.py
-pyinstaller pyinstaller.spec
-# 可选：打包成安装程序（需要 Inno Setup：https://jrsoftware.org/isinfo.php）
-& "C:\path\to\Inno Setup 6\ISCC.exe" installer.iss
-```
-
-不打包也能直接跑：`python menubar\windows\ai-limit-tray.py`。
-
-**功能**：跟 macOS 版一样的开关（显示周期、刷新频率、语言），另加开机自启（写注册表 Run 键）和应用内检查更新。
-
-**Windows 专属限制**：Chrome/Edge 的 Cookie 读取在 Windows 上读不到实时额度——原因见下方「说明」，想在 Windows 上用实时额度功能请改用 Firefox 登录。
-
----
-
 ## 命令行
 
 输出语言根据系统语言自动切换，无需手动设置。
@@ -101,11 +75,10 @@ pyinstaller pyinstaller.spec
 
 ### 环境要求
 
-- macOS 或 Windows
+- macOS
 - Python 3.8+
 - Chrome 或 Firefox 已登录 [claude.ai](https://claude.ai)（用于读取 Claude 额度）
 - Chrome 或 Firefox 已登录 [chatgpt.com](https://chatgpt.com)（用于读取 CodeX 额度，推荐路径）
-  - **Windows 上必须用 Firefox**，Chrome/Edge 不行——原因见下方「说明」
 - 可选：[CodeX CLI](https://developers.openai.com/codex/cli) 已安装并登录（作为浏览器 cookie 失效时的兜底路径）
 
 ### 使用前提
@@ -190,7 +163,7 @@ AI_LIMIT_LANG=zh ai-limit   # 强制中文
 
 ## 说明
 
-- **浏览器 Cookie 读取，macOS 和 Windows 不一样**：macOS 上 Chrome 的 Cookie 解密密钥存在系统 Keychain 里，Keychain 有正规的"弹窗询问用户是否允许第三方访问"机制，所以 Chrome/Firefox 在 macOS 上都能用。Windows 上 Chrome/Edge（Chromium 127+，2024 年年中起）用了"App-Bound Encryption"，把解密操作跟浏览器自身签名绑死，没有留给第三方的合法访问通道——所以 `browser_cookie3` 在 Windows 上**读不了** Chrome/Edge 的 Cookie（这是防 Cookie 窃取恶意软件的正规防护，不是我们的 bug；唯一已知的绕过手法跟恶意软件行为模式一致，会被杀毒软件拦截，所以没有实现）。**Firefox 不受影响**（Cookie 本来就是明文存盘的），两个平台都能用——Windows 上想用实时额度请用 Firefox。
+- 浏览器 Cookie 读取仅支持 macOS（依赖系统 Keychain 解密 Chrome Cookie）
 - Claude 额度使用的是 claude.ai 内部接口，**非官方 API**，可能随版本变化失效
 - **偶发的 ⚠️ 多为 Cloudflare 临时拦截**：claude.ai / chatgpt.com 会对非浏览器请求基于 TLS 指纹做人机校验（带有效 cookie 也可能被拦），表现为 ⚠️，**多数会自行恢复**。这是所有非浏览器访问官网工具的共性问题（官方 Claude Code / Codex CLI 自身也会遇到），非本工具缺陷，通常无需处理。若 ⚠️ 持续不消，从菜单打开「Claude 用量页」或「CodeX 分析页」，**保持该标签页不关闭**，效果更好
 - `<synthetic>` 模型记录是 Claude Code 遇到 API 错误时写入的占位，不计入统计
