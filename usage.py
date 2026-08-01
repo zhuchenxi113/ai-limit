@@ -15,13 +15,17 @@ import locale as _locale
 import os
 import json
 import pathlib
-import select
+import queue
 import shutil
 import socket
 import struct
 import subprocess
 import sys
+import threading
 import time
+
+IS_WINDOWS = sys.platform == "win32"
+IS_MACOS = sys.platform == "darwin"
 
 CLAUDE_BASE = pathlib.Path.home() / ".claude" / "projects"
 CODEX_BASE = pathlib.Path.home() / ".codex" / "sessions"
@@ -29,7 +33,7 @@ _CODEX_WINDOW_CACHE = pathlib.Path.home() / ".codex_window_cache"
 _MENUBAR_HISTORY_PATH = pathlib.Path.home() / ".ai-limit-menubar-history.jsonl"
 TZ_LOCAL = datetime.datetime.now().astimezone().tzinfo
 TZ_ABBR  = datetime.datetime.now().astimezone().strftime('%Z')
-__version__ = "0.3.23"
+__version__ = "0.3.24"
 
 # ── 外观配置（可直接修改） ────────────────────────────────────────────────────
 WARN_THRESHOLD = 20    # 剩余低于此值（%）显示黄色
@@ -39,7 +43,22 @@ COLOR_WARN = "\033[33m"   # 黄：偏低
 COLOR_CRIT = "\033[31m"   # 红：告警
 # ─────────────────────────────────────────────────────────────────────────────
 
-_C   = sys.stdout.isatty()
+if IS_WINDOWS:
+    try:
+        import ctypes
+        _kernel32 = ctypes.windll.kernel32
+        _kernel32.SetConsoleMode(_kernel32.GetStdHandle(-11), 7)
+    except Exception:
+        pass
+    # 中文 Windows 终端默认用 GBK（cp936）codepage，画进度条用的 Unicode 方块字符
+    # （░▓ 等）在 GBK 下无法编码，不重定向输出编码会直接崩溃退出。
+    try:
+        sys.stdout.reconfigure(encoding="utf-8")
+        sys.stderr.reconfigure(encoding="utf-8")
+    except Exception:
+        pass
+
+_C   = bool(sys.stdout and sys.stdout.isatty())
 _DIM = "\033[2m" if _C else ""
 _BOLD= "\033[1m" if _C else ""
 _RST = "\033[0m" if _C else ""
@@ -54,9 +73,37 @@ def _bc(r: float) -> str:
 @functools.lru_cache(maxsize=1)
 def _chrome_ua() -> str:
     ver = "124.0.0.0"
+    if IS_WINDOWS:
+        # 浏览器已在运行时，Windows 上 `chrome.exe/msedge.exe --version` 不会打印版本号，
+        # 而是把参数转发给已运行实例、原样打印一句本地化提示（如"正在现有浏览器会话中打开。"），
+        # 且该提示是本地 ANSI codepage 编码，UTF-8 decode 会直接抛异常。
+        # 改为直接读可执行文件自身的 VERSIONINFO 资源，不受运行状态影响，也不需要唤起浏览器。
+        candidates = [
+            p for p in (
+                os.path.expandvars(r"%ProgramFiles%\Google\Chrome\Application\chrome.exe"),
+                os.path.expandvars(r"%ProgramFiles(x86)%\Google\Chrome\Application\chrome.exe"),
+                os.path.expandvars(r"%LocalAppData%\Google\Chrome\Application\chrome.exe"),
+                os.path.expandvars(r"%ProgramFiles(x86)%\Microsoft\Edge\Application\msedge.exe"),
+                os.path.expandvars(r"%ProgramFiles%\Microsoft\Edge\Application\msedge.exe"),
+            ) if os.path.exists(p)
+        ]
+        for path in candidates:
+            try:
+                import win32api
+                info = win32api.GetFileVersionInfo(path, "\\")
+                ms, ls = info["FileVersionMS"], info["FileVersionLS"]
+                ver = f"{ms >> 16}.{ms & 0xFFFF}.{ls >> 16}.{ls & 0xFFFF}"
+                break
+            except Exception:
+                continue
+        return (
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            f"Chrome/{ver} Safari/537.36"
+        )
     candidates = (
         ["/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"]
-        if sys.platform == "darwin"
+        if IS_MACOS
         else ["google-chrome", "google-chrome-stable", "chromium-browser", "chromium"]
     )
     for cmd in candidates:
@@ -93,9 +140,20 @@ def _detect_lang() -> str:
     env = os.environ.get("AI_LIMIT_LANG", "")
     if env:
         return "zh" if env.lower().startswith("zh") else "en"
+    # Windows 的 locale.getlocale() 返回本地化显示名（如 'Chinese (Simplified)_China'），
+    # 不是 POSIX 的 'zh_CN'，直接 startswith('zh') 会把中文用户漏判成英文——macOS 返回
+    # 'zh_CN' 正常，所以这个坑只在 Windows 上出现。改用可靠的 UI 语言 API：主语言 ID
+    # 0x04 = 中文（与 macOS 的 zh_* 检测对齐）。
+    if IS_WINDOWS:
+        try:
+            import ctypes
+            langid = ctypes.windll.kernel32.GetUserDefaultUILanguage()
+            return "zh" if (langid & 0x3FF) == 0x04 else "en"
+        except Exception:
+            pass
     try:
-        loc = _locale.getlocale()[0] or os.environ.get("LANG", "")
-        return "zh" if loc.startswith("zh") else "en"
+        loc = (_locale.getlocale()[0] or os.environ.get("LANG", "")).lower()
+        return "zh" if (loc.startswith("zh") or "chinese" in loc) else "en"
     except Exception:
         return "en"
 
@@ -128,6 +186,122 @@ STATUS_SEVERITY = {
     "major_outage": 4,
     "critical": 4,
 }
+
+# ── 状态渠道统一定义（跨平台共享单源）─────────────────────────────────────────
+# 每个渠道有三层身份，各司其职，不能混用：
+#   1. 内部稳定 key：写进偏好文件、保存用户勾选，永不随官方改名变化
+#   2. 官方组件 ID：Statuspage components.json 里的 `id`，用于实时状态匹配；
+#      官方改名（改 `name`）时 `id` 不变，所以按 ID 匹配才能在改名后继续工作
+#   3. 官方名称：仅用于展示兜底和旧配置迁移（旧版本按 name 存过勾选）
+# 元组顺序 = 渠道定义顺序，用于"并列取最差时保持稳定顺序"和菜单展示顺序。
+# 定义在 usage.py 是因为 mac 版（ai-limit-app.py）与 Windows 版（menubar/windows/*）
+# 都从这里取，避免两平台各写一份 drift。
+STATUS_CHANNELS = {
+    "claude": (
+        # (内部 key,        官方组件 ID,     官方名称)
+        ("claude_code",    "yyzkbfz2thpt", "Claude Code"),
+        ("claude_web",     "rwppv331jlwc", "claude.ai"),
+        ("claude_cowork",  "bpp5gb3hpjcl", "Claude Cowork"),
+        ("claude_api",     "k8w3r06qmzrp", "Claude API (api.anthropic.com)"),
+        ("claude_console", "0qbwn08sd68x", "Claude Console (platform.claude.com)"),
+    ),
+    "codex": (
+        ("codex_app",    "01KMKFAMWKQ81YWSE1Z18R6VHR", "Codex in ChatGPT Desktop"),
+        ("chatgpt_work", "01KX45G1SH21AX5DT93D4HMF0P", "ChatGPT Work"),
+        ("codex_cli",    "01KMKFAMWKNQ84Z1766MV08ZDE", "CLI"),
+        ("codex_api",    "01KMP3KP5MGE23B80K1EK4S8PV", "Codex API"),
+        ("codex_vscode", "01KMP3KP5M8X0EBTVW6KN327EE", "VS Code extension"),
+        ("codex_web",    "01JVCV8YSWZFRSM1G5CVP253SK", "Codex Web"),
+    ),
+}
+
+# 每个服务默认勾选的内部 key。Claude 只默认勾 Claude Code；Codex 默认勾
+# App / CLI / API，ChatGPT Work、Claude Cowork 存在但默认不勾。
+STATUS_DEFAULT_SELECTION = {
+    "claude": ("claude_code",),
+    "codex": ("codex_app", "codex_cli", "codex_api"),
+}
+
+# 除官方名称外，还需兼容的历史别名 → 内部 key。旧版本 Windows/mac 曾用 "App"
+# 作为 codex_app 的显示名存进偏好文件，迁移时要认得。
+STATUS_LEGACY_NAME_ALIASES = {
+    "claude": {},
+    "codex": {
+        "App": "codex_app",
+    },
+}
+
+
+def status_channels(service: str) -> tuple:
+    """返回某服务的渠道定义元组（内部 key, 官方 ID, 官方名称），按定义顺序。"""
+    return STATUS_CHANNELS.get(service, ())
+
+
+def status_default_selection(service: str) -> list:
+    """返回某服务的默认勾选内部 key 列表（新的可变副本）。"""
+    return list(STATUS_DEFAULT_SELECTION.get(service, ()))
+
+
+def _status_alias_map(service: str) -> dict:
+    """把该服务下所有已知写法（内部 key / 官方名称 / 历史别名）映射到内部 key。"""
+    alias = {}
+    for key, _cid, name in STATUS_CHANNELS.get(service, ()):
+        alias[key] = key
+        alias[name] = key
+    alias.update(STATUS_LEGACY_NAME_ALIASES.get(service, {}))
+    return alias
+
+
+def normalize_status_key(service: str, value):
+    """把单个存储值（旧名称、历史别名或内部 key）规范化为内部 key。
+    无法识别（含 None、非字符串、未知字符串）时返回 None。纯函数。"""
+    if not isinstance(value, str):
+        return None
+    return _status_alias_map(service).get(value)
+
+
+def normalize_status_selection(service: str, values) -> list:
+    """把一组勾选存储值规范化为内部 key 列表：去重、丢弃无法识别项，
+    并按渠道定义顺序排列（保证并列取最差时顺序稳定）。空输入返回空列表
+    （不回退默认值——空勾选是合法的"不显示状态点"意图）。纯函数。"""
+    alias = _status_alias_map(service)
+    seen = set()
+    for value in values or []:
+        key = alias.get(value) if isinstance(value, str) else None
+        if key:
+            seen.add(key)
+    return [key for key, _cid, _name in STATUS_CHANNELS.get(service, ()) if key in seen]
+
+
+def worst_status_by_id(components, selected_keys, service):
+    """按官方组件 ID 匹配已选内部 key，返回其中严重度最差的一项。
+
+    返回 (status, key, name)：
+      - status: Statuspage 组件状态字符串（operational / degraded_performance …）
+      - key:    命中的内部稳定 key
+      - name:   本次 API 返回的官方名称（用于展示，官方改名后自动跟随）
+    并列（严重度相同）时按渠道定义顺序取排在前面的。
+    所有已选 key 的官方 ID 都不在 components 里（接口失败留空、或 ID 消失）时
+    返回 None —— 调用方据此显示中性"未知"，绝不沿用旧状态。纯函数。"""
+    channels = {key: (cid, name) for key, cid, name in STATUS_CHANNELS.get(service, ())}
+    order = {key: i for i, (key, _cid, _name) in enumerate(STATUS_CHANNELS.get(service, ()))}
+    by_id = {c.get("id"): c for c in (components or [])}
+    matched = []
+    for key in selected_keys or []:
+        info = channels.get(key)
+        if info is None:
+            continue
+        cid, fallback_name = info
+        comp = by_id.get(cid)
+        if comp is None:
+            continue
+        matched.append((key, comp.get("status", "unknown"),
+                        comp.get("name") or fallback_name))
+    if not matched:
+        return None
+    matched.sort(key=lambda m: (-STATUS_SEVERITY.get(m[1], 0), order.get(m[0], 999)))
+    key, status, name = matched[0]
+    return status, key, name
 
 
 
@@ -245,13 +419,13 @@ def _cookie_summary(cookie_header: str) -> dict:
 
 
 class ClaudeWebError(Exception):
-    """kind: 'generic' | 'cloudflare'（需人机验证）| 'auth'（登录失效）| 'timeout'"""
+    """kind: generic | cloudflare | auth | browser_session | timeout。"""
     def __init__(self, message, kind="generic"):
         super().__init__(message)
         self.kind = kind
 
 
-def _claude_web_context(referer: str) -> tuple[str, dict]:
+def _claude_web_context(referer: str, browser: str = "auto") -> tuple[str, dict]:
     try:
         import browser_cookie3
     except ImportError:
@@ -262,7 +436,13 @@ def _claude_web_context(referer: str) -> tuple[str, dict]:
 
     cookies = []
     errs = []
-    for name, loader in [("Chrome", browser_cookie3.chrome), ("Firefox", browser_cookie3.firefox)]:
+    if browser == "firefox":
+        loaders = [("Firefox", browser_cookie3.firefox)]
+    else:
+        loaders = [("Chrome", browser_cookie3.chrome), ("Firefox", browser_cookie3.firefox)]
+        if IS_WINDOWS:
+            loaders.insert(1, ("Edge", browser_cookie3.edge))
+    for name, loader in loaders:
         try:
             jar = loader(domain_name=".claude.ai")
             cookies = [(c.name, c.value) for c in jar]
@@ -273,10 +453,15 @@ def _claude_web_context(referer: str) -> tuple[str, dict]:
 
     if not cookies:
         detail = f" ({'; '.join(errs)})" if errs else ""
+        hint_zh = "，请先在浏览器登录 claude.ai"
+        hint_en = ", please log in to claude.ai first"
+        if IS_WINDOWS:
+            hint_zh += "（Windows 上 Chrome/Edge 因新版加密保护无法读取 Cookie，请改用 Firefox 登录后重试）"
+            hint_en += " (on Windows, Chrome/Edge cookies can't be read due to App-Bound Encryption — please log in via Firefox instead)"
         raise ClaudeWebError(t(
-            f"无法读取浏览器 cookie{detail}，请先在浏览器登录 claude.ai",
-            f"cannot read browser cookies{detail}, please log in to claude.ai first",
-        ))
+            f"无法读取浏览器 cookie{detail}{hint_zh}",
+            f"cannot read browser cookies{detail}{hint_en}",
+        ), kind="browser_session")
 
     cookie_dict = dict(cookies)
     org_id = cookie_dict.get("lastActiveOrg", "")
@@ -284,7 +469,7 @@ def _claude_web_context(referer: str) -> tuple[str, dict]:
         raise ClaudeWebError(t(
             "未能从 cookie 读取 org ID，请先在浏览器打开 claude.ai",
             "could not read org ID from cookie, please open claude.ai in your browser",
-        ))
+        ), kind="browser_session")
 
     cookie_header = "; ".join(f"{n}={v}" for n, v in cookies)
     headers = {
@@ -393,12 +578,14 @@ def _claude_web_get(path: str, headers: dict, timeout: int) -> dict:
         raise ClaudeWebError(f"非 JSON 响应: {body[:300].decode(errors='replace')}")
 
 
-def live_claude_usage(timeout: int = CLAUDE_WEB_TIMEOUT_SEC) -> dict:
+def live_claude_usage(timeout: int = CLAUDE_WEB_TIMEOUT_SEC,
+                      browser: str = "auto") -> dict:
     """
     通过浏览器 session cookie 调用 claude.ai/api/organizations/{org}/usage。
     返回形如 {"five_hour": {...}, "seven_day": {...}} 的 dict。
     """
-    org_id, headers = _claude_web_context("https://claude.ai/settings/usage")
+    org_id, headers = _claude_web_context(
+        "https://claude.ai/settings/usage", browser=browser)
     return _claude_web_get(
         f"/api/organizations/{org_id}/usage",
         headers,
@@ -406,11 +593,13 @@ def live_claude_usage(timeout: int = CLAUDE_WEB_TIMEOUT_SEC) -> dict:
     )
 
 
-def live_claude_plan(timeout: int = CLAUDE_WEB_TIMEOUT_SEC) -> str | None:
+def live_claude_plan(timeout: int = CLAUDE_WEB_TIMEOUT_SEC,
+                     browser: str = "auto") -> str | None:
     """
     读取 Claude 活跃组织能力，映射为用户可见套餐名；没有可靠字段时返回 None。
     """
-    org_id, headers = _claude_web_context("https://claude.ai/settings/billing")
+    org_id, headers = _claude_web_context(
+        "https://claude.ai/settings/billing", browser=browser)
     data = _claude_web_get(
         f"/api/organizations/{org_id}",
         headers,
@@ -526,7 +715,17 @@ def live_codex_rate_limits(timeout: int = REMOTE_TIMEOUT_SEC):
 
 def _wait_codex_app_server(proc: subprocess.Popen, port: int, timeout: int):
     deadline = time.monotonic() + timeout
+    line_q: "queue.Queue[str]" = queue.Queue()
     lines: list[str] = []
+
+    def _pump_stdout():
+        if not proc.stdout:
+            return
+        for line in iter(proc.stdout.readline, ""):
+            line_q.put(line)
+
+    threading.Thread(target=_pump_stdout, daemon=True).start()
+
     while time.monotonic() < deadline:
         if proc.poll() is not None:
             raise CodexRemoteError("app-server exited: " + "".join(lines[-3:]).strip())
@@ -535,10 +734,10 @@ def _wait_codex_app_server(proc: subprocess.Popen, port: int, timeout: int):
                 return
         except OSError:
             pass
-        if proc.stdout:
-            ready, _, _ = select.select([proc.stdout], [], [], 0)
-            if ready:
-                lines.append(proc.stdout.readline())
+        try:
+            lines.append(line_q.get_nowait())
+        except queue.Empty:
+            pass
         time.sleep(0.1)
     raise CodexRemoteError("app-server start timed out")
 
@@ -664,7 +863,10 @@ def _recv_exact(s: socket.socket, n: int) -> bytes:
 
 
 class CodexWebError(Exception):
-    pass
+    """kind: generic | browser_session | auth | network | timeout。"""
+    def __init__(self, message, kind="generic"):
+        super().__init__(message)
+        self.kind = kind
 
 
 class CodexAuthError(CodexWebError):
@@ -673,7 +875,7 @@ class CodexAuthError(CodexWebError):
     pass
 
 
-def _load_chatgpt_cookies():
+def _load_chatgpt_cookies(browser: str = "auto"):
     try:
         import browser_cookie3
     except ImportError:
@@ -682,7 +884,13 @@ def _load_chatgpt_cookies():
             "browser_cookie3 not installed, run: pip install browser-cookie3",
         ))
     errs = []
-    for name, loader in [("Chrome", browser_cookie3.chrome), ("Firefox", browser_cookie3.firefox)]:
+    if browser == "firefox":
+        loaders = [("Firefox", browser_cookie3.firefox)]
+    else:
+        loaders = [("Chrome", browser_cookie3.chrome), ("Firefox", browser_cookie3.firefox)]
+        if IS_WINDOWS:
+            loaders.insert(1, ("Edge", browser_cookie3.edge))
+    for name, loader in loaders:
         try:
             jar = loader(domain_name=".chatgpt.com")
             cookies = [(c.name, c.value) for c in jar]
@@ -691,10 +899,15 @@ def _load_chatgpt_cookies():
         except Exception as e:
             errs.append(f"{name}: {e}")
     detail = f" ({'; '.join(errs)})" if errs else ""
+    hint_zh = "，请先在浏览器登录 chatgpt.com"
+    hint_en = ", please log in to chatgpt.com in your browser"
+    if IS_WINDOWS:
+        hint_zh += "（Windows 上 Chrome/Edge 因新版加密保护无法读取 Cookie，请改用 Firefox 登录后重试）"
+        hint_en += " (on Windows, Chrome/Edge cookies can't be read due to App-Bound Encryption — please log in via Firefox instead)"
     raise CodexWebError(t(
-        f"无法读取 chatgpt.com cookie{detail}，请先在浏览器登录 chatgpt.com",
-        f"cannot read chatgpt.com cookies{detail}, please log in to chatgpt.com in your browser",
-    ))
+        f"无法读取 chatgpt.com cookie{detail}{hint_zh}",
+        f"cannot read chatgpt.com cookies{detail}{hint_en}",
+    ), kind="browser_session")
 
 
 def _chatgpt_headers(cookie_header: str, *, referer: str = "https://chatgpt.com/codex/cloud/settings/analytics", bearer: str = None) -> dict:
@@ -727,8 +940,10 @@ def _get_chatgpt_access_token(cookie_header: str, timeout: int) -> str:
             body = r.read()
     except urllib.error.HTTPError as e:
         raise CodexWebError(f"session HTTP {e.code}")
+    except (TimeoutError, socket.timeout) as e:
+        raise CodexWebError(f"session: {e}", kind="timeout")
     except Exception as e:
-        raise CodexWebError(f"session: {e}")
+        raise CodexWebError(f"session: {e}", kind="network")
     try:
         data = json.loads(body)
     except json.JSONDecodeError:
@@ -738,7 +953,7 @@ def _get_chatgpt_access_token(cookie_header: str, timeout: int) -> str:
         raise CodexWebError(t(
             "请先在浏览器登录 chatgpt.com",
             "please log in to chatgpt.com in your browser",
-        ))
+        ), kind="auth")
     return token
 
 
@@ -767,7 +982,7 @@ def _normalize_web_rate_limits(data: dict) -> dict:
     }
 
 
-def live_codex_web_usage(timeout: int = CLAUDE_WEB_TIMEOUT_SEC):
+def live_codex_web_usage(timeout: int = CLAUDE_WEB_TIMEOUT_SEC, browser: str = "auto"):
     """
     通过浏览器 cookie 读取 chatgpt.com 的 Codex usage 接口。
 
@@ -778,7 +993,7 @@ def live_codex_web_usage(timeout: int = CLAUDE_WEB_TIMEOUT_SEC):
     """
     import urllib.request
     import urllib.error
-    cookies = _load_chatgpt_cookies()
+    cookies = _load_chatgpt_cookies(browser=browser)
     cookie_header = "; ".join(f"{n}={v}" for n, v in cookies)
     token = _get_chatgpt_access_token(cookie_header, timeout)
     req = urllib.request.Request(
@@ -797,8 +1012,10 @@ def live_codex_web_usage(timeout: int = CLAUDE_WEB_TIMEOUT_SEC):
                 )
             )
         raise CodexWebError(f"HTTP {e.code}")
+    except (TimeoutError, socket.timeout) as e:
+        raise CodexWebError(str(e), kind="timeout")
     except Exception as e:
-        raise CodexWebError(str(e))
+        raise CodexWebError(str(e), kind="network")
     try:
         data = json.loads(body)
     except json.JSONDecodeError:
@@ -1025,7 +1242,7 @@ def render_claude(totals: dict, since: datetime.datetime, days_count: int,
             print()
 
     print(f"  {t('总输出', 'Total output')}: {_BOLD}{fmt_tokens(grand_out)}{_RST}  |  {t('净输入(非缓存)', 'Net input (non-cache)')}: {_BOLD}{fmt_tokens(grand_in_net)}{_RST}")
-    if show_ratio:
+    if detail and show_ratio:
         print(f"\n  {_BOLD}{t('输出占比', 'Output share')}{_RST}")
         name_w = max(len(m.replace("claude-", "")) for m in active)
         for m in sorted(active.keys(), key=lambda x: active[x]["output"], reverse=True):

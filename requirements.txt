@@ -1,2 +1,4 @@
 browser-cookie3==0.20.1
-rumps>=0.4.0
+rumps>=0.4.0; sys_platform == "darwin"
+pywin32; sys_platform == "win32"
+PySide6>=6.6; sys_platform == "win32"

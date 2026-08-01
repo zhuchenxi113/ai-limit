@@ -1,13 +1,27 @@
-__pycache__/
-*.pyc
 .DS_Store
-.ai/
+__pycache__/
 
-# 经验 / AI 协作框架文档：只进私有仓 ai-limit-private，绝不进开源仓
+# menubar/ py2app 构建产物（.app / .dmg / iconset 中间产物）
+menubar/build/
+menubar/build-icon/
+menubar/dist/
+
+# menubar/windows/ PyInstaller + Inno Setup 构建产物
+menubar/windows/dist_installer/
+
+# Windows Release 私钥及恢复演练临时文件（真实文件必须保存在仓库外）
+*ed25519-private*.dpapi
+*ed25519-private*.pem
+bitwarden*roundtrip.txt
+
+# 经验 / AI 协作框架文档：只进私有仓 ai-limit-private，绝不进开源仓。
+# 私仓中已经被 Git 跟踪的同名文件不受 ignore 影响；这些规则用于同步到
+# 开源仓时继续阻止本地协作文档被误加入。
 CLAUDE.md
 AGENTS.md
 AI_CONTEXT.md
 RUNBOOK.md
+.ai/
 .claude/
 .agents/
 docs/reference/

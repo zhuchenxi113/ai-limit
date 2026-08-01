@@ -1,0 +1,44 @@
+name: Tests
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+
+      - name: Install dependencies
+        run: python -m pip install -r requirements.txt pytest pyinstaller
+
+      - name: Run pytest suite
+        run: python -m pytest -q
+
+      - name: Run unittest discovery
+        run: python -m unittest discover -s tests
+
+      - name: Build Windows application
+        working-directory: menubar/windows
+        run: pyinstaller pyinstaller.spec --noconfirm --clean
+
+      - name: Verify Qt platform plugin
+        shell: pwsh
+        run: |
+          $plugin = "menubar/windows/dist/ai-limit-tray/_internal/PySide6/plugins/platforms/qwindows.dll"
+          if (-not (Test-Path -LiteralPath $plugin)) {
+            throw "Missing Qt platform plugin: $plugin"
+          }

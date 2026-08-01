@@ -6,9 +6,61 @@ Official downloads: https://github.com/zhuchenxi113/ai-limit/releases
 
 Website: https://ai-limit.waitsugar.com
 
-A lightweight tool to monitor real-time **Claude Code** and **Codex** usage limits, quota consumption, and token statistics — so you can adjust your AI usage before hitting rate limits. Available as a macOS menu bar app or a CLI.
+A lightweight tool to monitor real-time **Claude Code** and **Codex** usage limits, quota consumption, and token statistics — so you can adjust your AI usage before hitting rate limits. Available as a Windows tray app, a macOS menu bar app, or a CLI.
 
 If you find it useful, a Star would be appreciated: [GitHub](https://github.com/zhuchenxi113/ai-limit) · [Gitee](https://gitee.com/zhuchenxi113/ai-limit)
+
+## Windows Tray App
+
+The Windows app shows Claude Code and Codex quota as two compact taskbar tray icons. Click either icon to open the shared detail panel.
+
+<table>
+  <tr>
+    <td align="center"><img src="docs/screenshot-windows-panel-v0324-en.png" width="410" alt="AI Limit Windows quota panel in English" /></td>
+    <td align="center"><img src="docs/screenshot-windows-menu-v0324-en.png" width="445" alt="AI Limit Windows tray menu in English" /></td>
+  </tr>
+  <tr>
+    <td align="center"><sub>Quota panel</sub></td>
+    <td align="center"><sub>Tray menu and settings</sub></td>
+  </tr>
+</table>
+
+Tray icons: <img src="docs/screenshot-windows-tray-icons-v0324.png" width="90" alt="Claude and Codex Windows tray icons" />
+
+**Install**
+
+Download `ai-limit-<version>-setup.exe` from the latest [GitHub Release](https://github.com/zhuchenxi113/ai-limit/releases/latest) or [Gitee Release](https://gitee.com/zhuchenxi113/ai-limit/releases). The installer uses a visible, per-user setup wizard and does not require administrator access.
+
+> The current Windows build does not have an Authenticode certificate. Windows may show **Unknown publisher** or a SmartScreen warning. This is expected for the unsigned release; do not continue if the filename or download source is unexpected.
+
+**Requirements and first launch**
+
+- Windows 11 (the currently verified target)
+- Firefox signed in to [claude.ai](https://claude.ai) and/or [chatgpt.com](https://chatgpt.com)
+- Chrome and Edge cookies are not supported on Windows because their App-Bound Encryption prevents third-party tools from reading them
+- Windows may initially place both new tray icons in the hidden overflow area. Open the taskbar overflow and drag the Claude and Codex icons onto the taskbar if you want the quota values always visible
+
+**Features**
+
+- Chinese / English UI, with an always-discoverable bilingual language menu
+- 5-hour and 7-day quota with reset times and service status
+- Independently configurable Claude and Codex tray icons and panel sections
+- Adjustable 1–5 minute refresh interval and manual refresh
+- In-app update checks: AI Limit verifies the release installer with its embedded Ed25519 public key before opening the standard setup wizard
+
+**Build from source**
+
+Install Python dependencies, PyInstaller, and Inno Setup 6, then run from Windows PowerShell:
+
+```powershell
+pip install -r requirements.txt
+pip install pyinstaller
+cd menubar\windows
+pyinstaller pyinstaller.spec --noconfirm --clean
+& "$env:LOCALAPPDATA\Programs\Inno Setup 6\ISCC.exe" installer.iss
+```
+
+---
 
 ## macOS Menu Bar App
 
@@ -33,9 +85,9 @@ curl -fsSL https://raw.githubusercontent.com/zhuchenxi113/ai-limit/main/install.
 
 **First launch**
 
-The app is signed with a Developer ID and notarized by Apple, so it should open normally — no Gatekeeper bypass needed. If macOS still blocks it (e.g. the notarization/certificate has lapsed), use whichever matches your macOS version:
+The app is signed with a Developer ID and notarized by Apple, so it should open normally — no Gatekeeper bypass needed. If macOS still blocks it (for example, if the notarization or certificate has lapsed), use whichever matches your macOS version:
 
-- **macOS 15 Sequoia and later:** double-click the app. You'll see the dialog below (only **Done** / **Move to Trash** — there is no "Open" button anymore). Click **Done**, then open **System Settings → Privacy & Security**, scroll down to **Security**, and click **Open Anyway** next to ""AI Limit.app" was blocked…". Confirm with your password / Touch ID.
+- **macOS 15 Sequoia and later:** double-click the app. If the dialog only offers **Done** / **Move to Trash**, click **Done**, then open **System Settings → Privacy & Security**, scroll to **Security**, and click **Open Anyway** next to the blocked AI Limit message. Confirm with your password or Touch ID.
 - **macOS 14 Sonoma and earlier:** right-click (Control-click) the app → **Open** → **Open** in the dialog.
 
 <table><tr>
@@ -43,7 +95,7 @@ The app is signed with a Developer ID and notarized by Apple, so it should open 
   <td><img src="docs/install-open-anyway.png" width="440" /></td>
 </tr></table>
 
-> The screenshots are from a Chinese-language system. On an English system the same dialogs read: **"AI Limit.app" Not Opened** / **Done** / **Move to Trash**, and **Privacy & Security → Open Anyway**.
+> The screenshots are from a Chinese-language system. On an English system the same controls read **Done**, **Move to Trash**, and **Privacy & Security → Open Anyway**.
 
 **Features**
 
@@ -73,11 +125,11 @@ Output language is detected automatically from your system locale.
 
 ![CLI screenshot (English)](docs/screenshot-cli-v0321-en.png)
 
-![CLI screenshot (Chinese)](docs/screenshot-cli-v0321.png)
+![CLI screenshot (Chinese)](docs/screenshot-cli-v0324-zh.png)
 
 ### Requirements
 
-- macOS
+- macOS or Windows
 - Python 3.8+
 - Chrome or Firefox signed in to [claude.ai](https://claude.ai) (for Claude quota)
 - Chrome or Firefox signed in to [chatgpt.com](https://chatgpt.com) (recommended path for Codex quota)
@@ -145,27 +197,28 @@ AI_LIMIT_LANG=zh ai-limit   # force Chinese
 | Data | Source |
 |------|--------|
 | Token usage details | `~/.claude/projects/**/*.jsonl` |
-| Live quota | Browser cookie → `claude.ai/api/organizations/{orgId}/usage` |
+| macOS live quota | Browser cookie → `claude.ai/api/organizations/{orgId}/usage` |
+| Windows live quota | Firefox cookie → `claude.ai/api/organizations/{orgId}/usage` |
 
-Quota reading requires an active browser session on claude.ai. Falls back gracefully with an error message and a direct link if the cookie is missing or expired.
+On macOS, quota reading uses an active browser session and falls back gracefully with an error message and direct link if the cookie is unavailable. Windows exposes no data-source setting and does not fall back to OAuth. After signing in to claude.ai with Firefox it reads the web quota automatically; while signed out, the Claude icon shows a yellow warning and asks the user to sign in.
 
 ### Codex
 
-Data sources are tried in priority order:
+On macOS, data sources are tried in this order:
 
 | Priority | Data | Source | Triggers 5h window? |
 |------|------|--------|------|
 | 1 | Live quota | Browser cookie → `chatgpt.com/backend-api/codex/usage` | ❌ No |
-| 2 | Live quota | `codex app-server` WebSocket → `account/rateLimits/read` | ⚠️ **Yes** |
+| 2 | Live quota | `codex app-server` WebSocket → `account/rateLimits/read` | ⚠️ Yes |
 | 3 | Local fallback | `~/.codex/sessions/**/*.jsonl` | ❌ No |
 
-The browser path (1) reuses the same analytics endpoint that powers the chatgpt.com dashboard. It returns **merged Cloud + CLI usage**, is read-only, and does not trigger a new window. This is the recommended default.
+The browser path is read-only and returns **merged Cloud + CLI usage**. On macOS, if it fails and the current 5-hour window has expired, the `codex app-server` initialization fallback can start a new rolling window.
 
-> **⚠️ Side-effect warning (Codex protocol limitation):** When path 1 fails (not signed in to chatgpt.com / cookies expired / network issue), ai-limit falls back to `codex app-server`. That path sends an `initialize` call, which OpenAI counts as a session start — if the current 5-hour window has already expired, **this triggers a new 5-hour rolling window**. This is an inherent consequence of how the Codex CLI exposes its data; no workaround exists at the tool level.
+The Windows tray reads Firefox only and uses only the browser analytics endpoint. It exposes no data-source setting and does not fall back to CLI OAuth, local snapshots, or `codex app-server`.
 
 ## Notes
 
-- **macOS only**: browser cookie reading relies on the system Keychain to decrypt Chrome cookies
+- Windows browser-cookie reading supports Firefox only; macOS can decrypt browser cookies through Keychain
 - **Unofficial API**: Claude quota is fetched from an internal claude.ai endpoint, not an official API — it may break with future updates
 - **Occasional ⚠️ (Cloudflare challenge)**: claude.ai / chatgpt.com may temporarily serve a Cloudflare bot-challenge to non-browser requests (based on TLS fingerprint — even a valid cookie can be blocked), surfaced as a ⚠️. It usually clears on its own. This affects any non-browser tool accessing these sites — the official Claude Code / Codex CLIs hit the same thing — so it is not a defect of ai-limit and generally needs no action. If the warning persists, open the Claude usage page or CodeX dashboard from the menu and **keep the tab open** — the active browser session accelerates recovery
 - `<synthetic>` model entries are error placeholders written by Claude Code on API failures; they are excluded from all statistics
@@ -174,6 +227,12 @@ The browser path (1) reuses the same analytics endpoint that powers the chatgpt.
 ## Maintenance
 
 This is a personal tool maintained on a best-effort basis. Issues and PRs are welcome but not guaranteed to be addressed promptly. No long-term support is promised.
+
+- [Changelog](CHANGELOG.md)
+- [Windows 0.3.24 release notes](docs/releases/v0.3.24.md)
+- [Contributing guide](CONTRIBUTING.md)
+- [Security policy](SECURITY.md)
+- [Windows update security design](docs/windows-update-security.md)
 
 ## Other projects by the author
 
@@ -184,4 +243,4 @@ This is a personal tool maintained on a best-effort basis. Issues and PRs are we
 
 Project code: [Apache License 2.0](LICENSE)
 
-Third-party dependency: `browser-cookie3` is licensed under LGPL.
+Third-party notices: `browser-cookie3` is licensed under LGPL; the bundled Inno Setup Simplified Chinese translation is licensed under MIT (see `menubar/windows/languages/`).

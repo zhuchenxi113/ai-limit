@@ -6,9 +6,61 @@
 
 官网：https://ai-limit.waitsugar.com
 
-查看 Claude Code 和 CodeX 的实时剩余额度与 token 消耗情况。支持 macOS 菜单栏 App 和命令行两种使用方式。
+查看 Claude Code 和 CodeX 的实时剩余额度与 token 消耗情况。支持 Windows 托盘 App、macOS 菜单栏 App 和命令行。
 
 如果觉得有用，欢迎给个 Star 鼓励作者：[GitHub](https://github.com/zhuchenxi113/ai-limit) · [Gitee](https://gitee.com/zhuchenxi113/ai-limit)
+
+## Windows 托盘 App
+
+Windows 版用两个紧凑的任务栏托盘图标分别显示 Claude Code 和 CodeX 额度；点击任意一个图标可打开共用详情面板。
+
+<table>
+  <tr>
+    <td align="center"><img src="docs/screenshot-windows-panel-v0324-zh.png" width="410" alt="AI Limit Windows 中文额度面板" /></td>
+    <td align="center"><img src="docs/screenshot-windows-menu-v0324-zh.png" width="445" alt="AI Limit Windows 中文托盘菜单" /></td>
+  </tr>
+  <tr>
+    <td align="center"><sub>额度面板</sub></td>
+    <td align="center"><sub>托盘菜单与设置</sub></td>
+  </tr>
+</table>
+
+托盘图标：<img src="docs/screenshot-windows-tray-icons-v0324.png" width="90" alt="Claude 与 CodeX Windows 托盘图标" />
+
+**安装**
+
+从最新的 [GitHub Release](https://github.com/zhuchenxi113/ai-limit/releases/latest) 或 [Gitee Release](https://gitee.com/zhuchenxi113/ai-limit/releases) 下载 `ai-limit-<版本>-setup.exe`。安装程序使用当前用户范围的可见安装向导，不需要管理员权限。
+
+> 当前 Windows 版本尚无 Authenticode 代码签名证书，Windows 可能显示“未知发布者”或 SmartScreen 警告。未签名版本出现该提示属于预期现象；如果文件名或下载来源不符合预期，请勿继续安装。
+
+**环境要求与首次启动**
+
+- Windows 11（目前实际验证的平台）
+- Firefox 已登录 [claude.ai](https://claude.ai) 和/或 [chatgpt.com](https://chatgpt.com)
+- Windows 上不支持读取 Chrome、Edge Cookie：它们的 App-Bound Encryption 会阻止第三方工具读取
+- Windows 初次注册托盘图标时，可能把两个图标放入任务栏折叠区。若希望始终看到额度，请打开折叠区，把 Claude 和 CodeX 图标拖到任务栏
+
+**功能**
+
+- 中英文界面，以及始终可识别的中英双语语言菜单
+- 5 小时、7 天额度、重置时间和服务状态
+- Claude、CodeX 托盘图标及面板内容可分别配置
+- 每 1–5 分钟自动刷新，并支持立即刷新
+- App 内检查更新：AI Limit 会先用内置 Ed25519 公钥验证发布安装包，再打开标准安装向导
+
+**从源码构建**
+
+安装 Python 依赖、PyInstaller 和 Inno Setup 6，然后在 Windows PowerShell 中执行：
+
+```powershell
+pip install -r requirements.txt
+pip install pyinstaller
+cd menubar\windows
+pyinstaller pyinstaller.spec --noconfirm --clean
+& "$env:LOCALAPPDATA\Programs\Inno Setup 6\ISCC.exe" installer.iss
+```
+
+---
 
 ## macOS 菜单栏 App
 
@@ -33,9 +85,9 @@ curl -fsSL https://raw.githubusercontent.com/zhuchenxi113/ai-limit/main/install.
 
 **首次启动**
 
-App 已用 Developer ID 签名并通过 Apple 公证，正常情况下双击即可打开，无需绕过 Gatekeeper。如果 macOS 仍然拦截（比如公证/证书过期失效），按你的系统版本二选一：
+App 已用 Developer ID 签名并通过 Apple 公证，正常情况下双击即可打开，无需绕过 Gatekeeper。如果 macOS 仍然拦截（例如公证或证书已经失效），按系统版本处理：
 
-- **macOS 15 Sequoia 及以后：** 双击 App，会弹出下图左侧的对话框（只有「完成 / 移到废纸篓」，**已经没有「打开」按钮**）。点「完成」，然后打开**系统设置 → 隐私与安全性**，下滚到「安全性」，在「已阻止 AI Limit.app…」处点**「仍要打开」**，再用密码 / 触控 ID 确认。
+- **macOS 15 Sequoia 及以后：** 双击 App；若对话框只有「完成 / 移到废纸篓」，点「完成」，然后打开**系统设置 → 隐私与安全性**，下滚到「安全性」，在 AI Limit 的拦截提示处点**「仍要打开」**，再用密码或触控 ID 确认。
 - **macOS 14 Sonoma 及更早：** 右键（Control 点按）App → **打开** → 对话框里再点**打开**。
 
 <table><tr>
@@ -71,11 +123,11 @@ bash make-dmg.sh
 
 ![CLI 截图（英文）](docs/screenshot-cli-v0321-en.png)
 
-![CLI 截图（中文）](docs/screenshot-cli-v0321.png)
+![CLI 截图（中文）](docs/screenshot-cli-v0324-zh.png)
 
 ### 环境要求
 
-- macOS
+- macOS 或 Windows
 - Python 3.8+
 - Chrome 或 Firefox 已登录 [claude.ai](https://claude.ai)（用于读取 Claude 额度）
 - Chrome 或 Firefox 已登录 [chatgpt.com](https://chatgpt.com)（用于读取 CodeX 额度，推荐路径）
@@ -143,27 +195,28 @@ AI_LIMIT_LANG=zh ai-limit   # 强制中文
 | 数据 | 来源 |
 |------|------|
 | token 消耗明细 | `~/.claude/projects/**/*.jsonl` |
-| 实时剩余额度 | 浏览器 Cookie → `claude.ai/api/organizations/{orgId}/usage` |
+| macOS 实时剩余额度 | 浏览器 Cookie → `claude.ai/api/organizations/{orgId}/usage` |
+| Windows 实时剩余额度 | Firefox Cookie → `claude.ai/api/organizations/{orgId}/usage` |
 
-额度获取依赖 Chrome/Firefox 的 claude.ai 登录态。Cookie 失效时自动回退，显示失败原因和网页链接。
+macOS 使用有效的浏览器登录态读取额度；Cookie 不可用时会显示失败原因和网页链接。Windows 不显示数据源设置，也不回退 OAuth：Firefox 登录 claude.ai 后自动读取网页额度；未登录时 Claude 图标显示黄色警告并提示登录。
 
 ### CodeX
 
-数据源按优先级依次尝试：
+macOS 按以下顺序尝试数据源：
 
 | 优先级 | 数据 | 来源 | 是否触发 5h 窗口 |
 |------|------|------|------|
 | 1 | 实时剩余额度 | 浏览器 Cookie → `chatgpt.com/backend-api/codex/usage` | ❌ 不触发 |
-| 2 | 实时剩余额度 | `codex app-server` WebSocket → `account/rateLimits/read` | ⚠️ **会触发** |
+| 2 | 实时剩余额度 | `codex app-server` WebSocket → `account/rateLimits/read` | ⚠️ 会触发 |
 | 3 | 本地回退 | `~/.codex/sessions/**/*.jsonl` | ❌ 不触发 |
 
-浏览器路径（路径 1）复用 chatgpt.com 网页分析端点，与 dashboard 同一通道，覆盖 **Cloud + CLI 合并用量**，只读不触发窗口。这是默认推荐路径。
+浏览器路径只读，并覆盖 **Cloud + CLI 合并用量**。macOS 上如果浏览器路径失败且原 5 小时窗口已经到期，`codex app-server` 初始化回退可能启动新的滚动窗口。
 
-> **⚠️ 副作用警告（CodeX 协议限制）：** 当路径 1 失败（未登录 chatgpt.com / cookie 过期 / 网络异常），ai-limit 会自动 fallback 到 `codex app-server`。这条路径需要发送 `initialize` 调用，OpenAI 会将其计为一次会话开始——若当前 5 小时窗口已到期，**会触发新的 5 小时冷却窗口计时**。这是 CodeX CLI 数据接口的固有机制，工具层面无法规避。
+Windows 托盘固定读取 Firefox，只使用浏览器分析端点；不显示数据源设置，也不回退 CLI OAuth、本地快照或 `codex app-server`。
 
 ## 说明
 
-- 浏览器 Cookie 读取仅支持 macOS（依赖系统 Keychain 解密 Chrome Cookie）
+- Windows 浏览器 Cookie 读取仅支持 Firefox；macOS 可使用系统 Keychain 解密浏览器 Cookie
 - Claude 额度使用的是 claude.ai 内部接口，**非官方 API**，可能随版本变化失效
 - **偶发的 ⚠️ 多为 Cloudflare 临时拦截**：claude.ai / chatgpt.com 会对非浏览器请求基于 TLS 指纹做人机校验（带有效 cookie 也可能被拦），表现为 ⚠️，**多数会自行恢复**。这是所有非浏览器访问官网工具的共性问题（官方 Claude Code / Codex CLI 自身也会遇到），非本工具缺陷，通常无需处理。若 ⚠️ 持续不消，从菜单打开「Claude 用量页」或「CodeX 分析页」，**保持该标签页不关闭**，效果更好
 - `<synthetic>` 模型记录是 Claude Code 遇到 API 错误时写入的占位，不计入统计
@@ -172,6 +225,12 @@ AI_LIMIT_LANG=zh ai-limit   # 强制中文
 ## 维护说明
 
 个人工具，按自己的使用需求维护，不保证及时处理 issue 或 PR，也不承诺长期支持。
+
+- [更新记录](CHANGELOG.md)
+- [Windows 0.3.24 发布说明](docs/releases/v0.3.24.md)
+- [贡献指南（英文）](CONTRIBUTING.md)
+- [安全策略（英文）](SECURITY.md)
+- [Windows 更新安全设计（英文）](docs/windows-update-security.md)
 
 ## 作者其他项目
 
@@ -182,4 +241,4 @@ AI_LIMIT_LANG=zh ai-limit   # 强制中文
 
 本项目代码使用 [Apache License 2.0](LICENSE)。
 
-第三方依赖：`browser-cookie3` 使用 LGPL 协议。
+第三方说明：`browser-cookie3` 使用 LGPL 协议；随安装器打包的 Inno Setup 简体中文翻译使用 MIT 协议（见 `menubar/windows/languages/`）。
