@@ -57,8 +57,8 @@ The Windows app shows Claude Code and Codex quota as two compact taskbar tray ic
 
 <table>
   <tr>
-    <td align="center"><img src="docs/screenshot-windows-panel-v0324-en.png" height="360" alt="AI Limit Windows quota panel in English" /></td>
-    <td align="center"><img src="docs/screenshot-windows-menu-v0324-en.png" height="360" alt="AI Limit Windows tray menu in English" /></td>
+    <td align="center"><img src="docs/screenshot-windows-panel-v0324-en.png" height="270" alt="AI Limit Windows quota panel in English" /></td>
+    <td align="center"><img src="docs/screenshot-windows-menu-v0324-en.png" height="270" alt="AI Limit Windows tray menu in English" /></td>
   </tr>
   <tr>
     <td align="center"><sub>Quota panel</sub></td>
@@ -111,11 +111,11 @@ The CLI supports macOS and Windows, and its output language is detected automati
 
 #### macOS Terminal
 
-<p align="center"><img src="docs/screenshot-cli-v0321-en.png" height="500" alt="AI Limit CLI in macOS Terminal, English" /></p>
+<p align="center"><img src="docs/screenshot-cli-v0321-en.png" width="315" alt="AI Limit CLI in macOS Terminal, English" /></p>
 
 #### Windows PowerShell
 
-<p align="center"><img src="docs/screenshot-cli-v0324-en.png" height="500" alt="AI Limit CLI in Windows PowerShell, English" /></p>
+<p align="center"><img src="docs/screenshot-cli-v0324-en.png" width="653" alt="AI Limit CLI in Windows PowerShell, English" /></p>
 
 ### Requirements
 
