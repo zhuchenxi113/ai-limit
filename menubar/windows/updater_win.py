@@ -8,6 +8,7 @@ Ed25519 通过后继续，后者必须拒绝。安装包不静默执行；启动
 the Web（互联网来源标记），但 SmartScreen 是否弹窗只由系统决定，不承担
 应用的真实性校验。
 """
+import base64
 import json
 import os
 import pathlib
@@ -315,11 +316,12 @@ def _mark_installer_as_internet_file(installer_path, source_url: str) -> None:
 
 def trigger_interactive_install(installer_path, expected_version: str,
                                 source_url: str) -> None:
-    """写来源标记和 pending marker，再由 Windows Shell 打开可见安装向导。
+    """写来源标记和 pending marker，再交给独立 helper 打开安装向导。
 
-    不传 ``/SILENT``/``/VERYSILENT``。调用成功后上层才退出主进程；用户取消
-    系统安全提示（若系统显示）或安装向导时，下一次启动会根据 pending marker
-    明确提示更新未完成。
+    不传 ``/SILENT``/``/VERYSILENT``。helper 先等当前 App 退出，再通过
+    Windows Shell 打开可见安装器；这样 SmartScreen 扫描或 ShellExecute 变慢
+    不会把 Qt 主线程永久卡在“更新中”。用户取消系统安全提示（若系统显示）
+    或安装向导时，下一次启动会根据 pending marker 明确提示更新未完成。
     """
     installer_path = pathlib.Path(installer_path)
     _mark_installer_as_internet_file(installer_path, source_url)
@@ -340,8 +342,31 @@ def trigger_interactive_install(installer_path, expected_version: str,
             pass
         raise UpdateFailed("marker_failed", f"无法记录更新状态：{e}") from e
 
+    installer_literal = "'" + str(installer_path).replace("'", "''") + "'"
+    helper_script = (
+        "$ErrorActionPreference = 'Stop'\n"
+        f"$parentId = {os.getpid()}\n"
+        f"$installer = {installer_literal}\n"
+        "try { Wait-Process -Id $parentId -Timeout 30 -ErrorAction SilentlyContinue } catch {}\n"
+        "Start-Process -FilePath $installer\n"
+    )
+    encoded_script = base64.b64encode(
+        helper_script.encode("utf-16le")
+    ).decode("ascii")
+    powershell = (
+        pathlib.Path(os.environ.get("SystemRoot", r"C:\Windows"))
+        / "System32" / "WindowsPowerShell" / "v1.0" / "powershell.exe"
+    )
     try:
-        os.startfile(str(installer_path), "open")
+        subprocess.Popen(
+            [str(powershell), "-NoProfile", "-NonInteractive",
+             "-WindowStyle", "Hidden", "-EncodedCommand", encoded_script],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            close_fds=True,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
     except Exception as e:
         try:
             _UPDATE_PENDING_MARKER.unlink()

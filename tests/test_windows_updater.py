@@ -213,13 +213,16 @@ class WindowsUpdaterTests(unittest.TestCase):
             marker = root / "pending.json"
             with (mock.patch.object(updater_win, "_UPDATE_PENDING_MARKER", marker),
                   mock.patch.object(updater_win, "_mark_installer_as_internet_file") as mark,
-                  mock.patch.object(updater_win.os, "startfile") as startfile):
+                  mock.patch.object(updater_win.subprocess, "Popen") as popen):
                 updater_win.trigger_interactive_install(
                     installer, "0.3.23", "https://github.com/example/setup.exe"
                 )
 
             mark.assert_called_once_with(installer, "https://github.com/example/setup.exe")
-            startfile.assert_called_once_with(str(installer), "open")
+            popen.assert_called_once()
+            command = popen.call_args.args[0]
+            self.assertNotIn("/SILENT", command)
+            self.assertNotIn("/VERYSILENT", command)
             self.assertEqual(
                 __import__("json").loads(marker.read_text(encoding="utf-8"))["target_version"],
                 "0.3.23",
@@ -233,7 +236,9 @@ class WindowsUpdaterTests(unittest.TestCase):
             marker = root / "pending.json"
             with (mock.patch.object(updater_win, "_UPDATE_PENDING_MARKER", marker),
                   mock.patch.object(updater_win, "_mark_installer_as_internet_file"),
-                  mock.patch.object(updater_win.os, "startfile", side_effect=OSError("blocked"))):
+                  mock.patch.object(
+                      updater_win.subprocess, "Popen", side_effect=OSError("blocked")
+                  )):
                 with self.assertRaises(updater_win.UpdateFailed) as caught:
                     updater_win.trigger_interactive_install(
                         installer, "0.3.23", "https://github.com/example/setup.exe"
@@ -249,13 +254,13 @@ class WindowsUpdaterTests(unittest.TestCase):
             marker = root / "missing-parent" / "pending.json"
             with (mock.patch.object(updater_win, "_UPDATE_PENDING_MARKER", marker),
                   mock.patch.object(updater_win, "_mark_installer_as_internet_file"),
-                  mock.patch.object(updater_win.os, "startfile") as startfile):
+                  mock.patch.object(updater_win.subprocess, "Popen") as popen):
                 with self.assertRaises(updater_win.UpdateFailed) as caught:
                     updater_win.trigger_interactive_install(
                         installer, "0.3.23", "https://github.com/example/setup.exe"
                     )
             self.assertEqual(caught.exception.reason, "marker_failed")
-            startfile.assert_not_called()
+            popen.assert_not_called()
 
     def test_tray_quits_only_after_interactive_installer_launches(self):
         module = load_tray_module("ai_limit_tray_updater_success_test")

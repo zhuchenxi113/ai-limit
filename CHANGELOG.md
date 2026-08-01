@@ -2,6 +2,22 @@
 
 All notable user-facing changes to AI Limit are documented here.
 
+## 0.3.25 - 2026-08-02
+
+### Added
+
+- Windows installer location can now be selected and is remembered for later upgrades.
+- When the selected Windows install directory changes, setup confirms the move and safely uninstalls the previously registered copy before installing the new one.
+
+### Fixed
+
+- Windows in-app updates no longer block the tray application's interface thread while handing the installer to Windows. A detached helper now waits for AI Limit to exit before opening the visible installer.
+- Windows command-line language detection now recognizes the native Simplified Chinese locale name.
+
+### Upgrade note
+
+- The updater included in Windows v0.3.24 may remain at “Updating…” before it can open the installer. If that happens, exit AI Limit and install v0.3.25 manually. Future updates use the corrected launch path.
+
 ## 0.3.24 - 2026-08-01
 
 ### Added

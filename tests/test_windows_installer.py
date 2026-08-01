@@ -24,6 +24,25 @@ def test_installer_uses_product_identity_and_chinese_wizard() -> None:
     assert script.index('Name: "chinesesimplified"') < script.index('Name: "english"')
 
 
+def test_installer_always_offers_install_location() -> None:
+    script = _script()
+
+    assert "DisableDirPage=no" in script
+    assert "UsePreviousAppDir=yes" in script
+
+
+def test_installer_uninstalls_previous_copy_before_relocation() -> None:
+    script = _script()
+
+    assert "function IsRelocation: Boolean;" in script
+    assert "function PrepareToInstall(var NeedsRestart: Boolean): String;" in script
+    assert "PreviousUninstallExe" in script
+    assert "ewWaitUntilTerminated" in script
+    assert "OldExecutable := AddBackslash(PreviousInstallDir) + 'ai-limit-tray.exe';" in script
+    assert "PreviousInstallStillPresent" in script
+    assert "DelTree(" not in script
+
+
 def test_installer_offers_desktop_icon_and_autostart_tasks() -> None:
     script = _script()
 
