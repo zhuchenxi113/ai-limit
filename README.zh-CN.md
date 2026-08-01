@@ -120,11 +120,11 @@ CLI 支持 macOS 和 Windows，输出语言根据系统语言自动切换，无�
 
 #### macOS 终端
 
-<p align="center"><img src="docs/screenshot-cli-v0321.png" width="315" alt="AI Limit macOS 终端 CLI 中文效果" /></p>
+<p align="center"><img src="docs/screenshot-cli-v0321.png" width="653" alt="AI Limit macOS 终端 CLI 中文效果" /></p>
 
 #### Windows PowerShell
 
-<p align="center"><img src="docs/screenshot-cli-v0324-zh.png" width="520" alt="AI Limit Windows PowerShell CLI 中文效果" /></p>
+<p align="center"><img src="docs/screenshot-cli-v0324-zh.png" width="653" alt="AI Limit Windows PowerShell CLI 中文效果" /></p>
 
 ### 环境要求
 
