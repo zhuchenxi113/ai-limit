@@ -119,13 +119,35 @@ pyinstaller pyinstaller.spec --noconfirm --clean
 
 ## CLI
 
-The CLI supports macOS and Windows, and its output language is detected automatically from your system locale. The screenshots below were captured in Windows PowerShell.
+The CLI supports macOS and Windows, and its output language is detected automatically from your system locale. Examples for both macOS Terminal and Windows PowerShell are shown below.
 
 ### Preview
 
-![CLI in Windows PowerShell (English)](docs/screenshot-cli-v0324-en.png)
+#### macOS Terminal
 
-![CLI in Windows PowerShell (Chinese)](docs/screenshot-cli-v0324-zh.png)
+<table>
+  <tr>
+    <td align="center"><img src="docs/screenshot-cli-v0321-en.png" width="430" alt="AI Limit CLI in macOS Terminal, English" /></td>
+    <td align="center"><img src="docs/screenshot-cli-v0321.png" width="300" alt="AI Limit CLI in macOS Terminal, Chinese" /></td>
+  </tr>
+  <tr>
+    <td align="center"><sub>English</sub></td>
+    <td align="center"><sub>中文</sub></td>
+  </tr>
+</table>
+
+#### Windows PowerShell
+
+<table>
+  <tr>
+    <td align="center"><img src="docs/screenshot-cli-v0324-en.png" width="430" alt="AI Limit CLI in Windows PowerShell, English" /></td>
+    <td align="center"><img src="docs/screenshot-cli-v0324-zh.png" width="430" alt="AI Limit CLI in Windows PowerShell, Chinese" /></td>
+  </tr>
+  <tr>
+    <td align="center"><sub>English</sub></td>
+    <td align="center"><sub>中文</sub></td>
+  </tr>
+</table>
 
 ### Requirements
 

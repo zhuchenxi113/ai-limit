@@ -117,13 +117,35 @@ pyinstaller pyinstaller.spec --noconfirm --clean
 
 ## 命令行
 
-CLI 支持 macOS 和 Windows，输出语言根据系统语言自动切换，无需手动设置。以下截图来自 Windows PowerShell。
+CLI 支持 macOS 和 Windows，输出语言根据系统语言自动切换，无需手动设置。下方分别展示 macOS 终端和 Windows PowerShell 的运行效果。
 
 ### 效果
 
-![Windows PowerShell CLI 截图（英文）](docs/screenshot-cli-v0324-en.png)
+#### macOS 终端
 
-![Windows PowerShell CLI 截图（中文）](docs/screenshot-cli-v0324-zh.png)
+<table>
+  <tr>
+    <td align="center"><img src="docs/screenshot-cli-v0321-en.png" width="430" alt="AI Limit macOS 终端 CLI 英文效果" /></td>
+    <td align="center"><img src="docs/screenshot-cli-v0321.png" width="300" alt="AI Limit macOS 终端 CLI 中文效果" /></td>
+  </tr>
+  <tr>
+    <td align="center"><sub>English</sub></td>
+    <td align="center"><sub>中文</sub></td>
+  </tr>
+</table>
+
+#### Windows PowerShell
+
+<table>
+  <tr>
+    <td align="center"><img src="docs/screenshot-cli-v0324-en.png" width="430" alt="AI Limit Windows PowerShell CLI 英文效果" /></td>
+    <td align="center"><img src="docs/screenshot-cli-v0324-zh.png" width="430" alt="AI Limit Windows PowerShell CLI 中文效果" /></td>
+  </tr>
+  <tr>
+    <td align="center"><sub>English</sub></td>
+    <td align="center"><sub>中文</sub></td>
+  </tr>
+</table>
 
 ### 环境要求
 
