@@ -16,6 +16,7 @@ import os
 import json
 import pathlib
 import queue
+import re
 import shutil
 import socket
 import struct
@@ -336,8 +337,34 @@ def fmt_plan(plan: str) -> str:
     return str(plan).replace("_", " ").title()
 
 
+def fmt_timezone(dt: datetime.datetime = None) -> str:
+    """Return a localized timezone label without leaking OS-localized text into English."""
+    if LANG == "zh":
+        return TZ_ABBR
+    value = dt or datetime.datetime.now(TZ_LOCAL)
+    offset = value.utcoffset()
+    if offset is None:
+        return "UTC"
+    total_minutes = round(offset.total_seconds() / 60)
+    sign = "+" if total_minutes >= 0 else "-"
+    hours, minutes = divmod(abs(total_minutes), 60)
+    return f"UTC{sign}{hours:02d}:{minutes:02d}"
+
+
+def fmt_error(error) -> str:
+    """Keep OS-localized exception text out of an explicitly English CLI."""
+    text = str(error)
+    if LANG != "en" or not re.search(r"[\u3400-\u9fff]", text):
+        return text
+    return re.sub(
+        r"[\u3400-\u9fff][\u3400-\u9fff，。！？、；：“”‘’（）\s]*",
+        "localized system error",
+        text,
+    )
+
+
 def fmt_dt(dt: datetime.datetime) -> str:
-    return f"{dt.strftime('%m-%d %H:%M')} {TZ_ABBR}"
+    return f"{dt.strftime('%m-%d %H:%M')} {fmt_timezone(dt)}"
 
 
 def fmt_reset_dt(dt: datetime.datetime) -> str:
@@ -369,7 +396,7 @@ def fmt_reset_dt(dt: datetime.datetime) -> str:
             wd = f"next {_bare_en[dt.weekday()]}"
         else:
             wd = f"{_bare_en[dt.weekday()]:<8}"
-    return f"{wd} {dt.strftime('%m-%d %H:%M')} {TZ_ABBR}"
+    return f"{wd} {dt.strftime('%m-%d %H:%M')} {fmt_timezone(dt)}"
 
 
 def find_free_local_port() -> int:
@@ -1293,7 +1320,7 @@ def render_claude(totals: dict, since: datetime.datetime, days_count: int,
             print(f"  →  {CLAUDE_USAGE_URL}  ({t('Cmd+双击打开', 'Cmd+double-click to open')})")
     elif web_error:
         print(f"\n  {t('实时额度  (与 --days 统计范围无关)', 'Live quota  (independent of --days range)')}")
-        print(f"  ⚠️  {t('读取失败', 'Failed to fetch')}: {web_error}")
+        print(f"  ⚠️  {t('读取失败', 'Failed to fetch')}: {fmt_error(web_error)}")
         print(f"  →  {CLAUDE_USAGE_URL}  ({t('Cmd+双击打开', 'Cmd+double-click to open')})")
     else:
         print(f"\n  ⚠️  {t('Claude 周额度百分比本地不可得', 'Claude quota unavailable locally')}  →  {CLAUDE_USAGE_URL}  ({t('Cmd+双击打开', 'Cmd+double-click to open')})")
@@ -1382,7 +1409,7 @@ def render_codex(since: datetime.datetime):
             print(f"  {_DIM}{fallback_reason}{_RST}")
         else:
             if fallback_reason:
-                print(f"  {t('实时读取失败', 'Live fetch failed')}: {fallback_reason}")
+                print(f"  {t('实时读取失败', 'Live fetch failed')}: {fmt_error(fallback_reason)}")
             print(t("  （未找到 CodeX 数据）", "  (no CodeX data found)"))
         return
 
@@ -1402,7 +1429,7 @@ def render_codex(since: datetime.datetime):
     print(f"  {_DIM}{t('数据时间', 'Data time')}: {fmt_dt(ts_local)}  ({source_labels[source]}){_RST}")
     print(f"  {_DIM}{t('数据来源', 'Source')}: {source_details[source]}{_RST}")
     if fallback_reason and source == "snapshot":
-        print(f"  {t('实时读取失败', 'Live fetch failed')}: {fallback_reason}")
+        print(f"  {t('实时读取失败', 'Live fetch failed')}: {fmt_error(fallback_reason)}")
     plan = rl.get("plan_type") or "?"
     print(f"  {t('套餐', 'Plan')}: {_BOLD}{fmt_plan(plan)}{_RST}")
     print()
@@ -1553,7 +1580,7 @@ def main():
     _wd_zh = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"]
     _wd_en = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
     wd_now = _wd_zh[now_local.weekday()] if LANG == "zh" else _wd_en[now_local.weekday()]
-    print(f"\n{_DIM}{t('查询时间', 'Queried at')}: {wd_now} {now_local.strftime('%m-%d %H:%M')} {TZ_ABBR}{_RST}")
+    print(f"\n{_DIM}{t('查询时间', 'Queried at')}: {wd_now} {now_local.strftime('%m-%d %H:%M')} {fmt_timezone(now_local)}{_RST}")
 
     claude_totals = collect_claude(since)
 

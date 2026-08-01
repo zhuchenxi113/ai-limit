@@ -10,58 +10,6 @@
 
 如果觉得有用，欢迎给个 Star 鼓励作者：[GitHub](https://github.com/zhuchenxi113/ai-limit) · [Gitee](https://gitee.com/zhuchenxi113/ai-limit)
 
-## Windows 托盘 App
-
-Windows 版用两个紧凑的任务栏托盘图标分别显示 Claude Code 和 CodeX 额度；点击任意一个图标可打开共用详情面板。
-
-<table>
-  <tr>
-    <td align="center"><img src="docs/screenshot-windows-panel-v0324-zh.png" width="410" alt="AI Limit Windows 中文额度面板" /></td>
-    <td align="center"><img src="docs/screenshot-windows-menu-v0324-zh.png" width="445" alt="AI Limit Windows 中文托盘菜单" /></td>
-  </tr>
-  <tr>
-    <td align="center"><sub>额度面板</sub></td>
-    <td align="center"><sub>托盘菜单与设置</sub></td>
-  </tr>
-</table>
-
-托盘图标：<img src="docs/screenshot-windows-tray-icons-v0324.png" width="90" alt="Claude 与 CodeX Windows 托盘图标" />
-
-**安装**
-
-从最新的 [GitHub Release](https://github.com/zhuchenxi113/ai-limit/releases/latest) 或 [Gitee Release](https://gitee.com/zhuchenxi113/ai-limit/releases) 下载 `ai-limit-<版本>-setup.exe`。安装程序使用当前用户范围的可见安装向导，不需要管理员权限。
-
-> 当前 Windows 版本尚无 Authenticode 代码签名证书，Windows 可能显示“未知发布者”或 SmartScreen 警告。未签名版本出现该提示属于预期现象；如果文件名或下载来源不符合预期，请勿继续安装。
-
-**环境要求与首次启动**
-
-- Windows 11（目前实际验证的平台）
-- Firefox 已登录 [claude.ai](https://claude.ai) 和/或 [chatgpt.com](https://chatgpt.com)
-- Windows 上不支持读取 Chrome、Edge Cookie：它们的 App-Bound Encryption 会阻止第三方工具读取
-- Windows 初次注册托盘图标时，可能把两个图标放入任务栏折叠区。若希望始终看到额度，请打开折叠区，把 Claude 和 CodeX 图标拖到任务栏
-
-**功能**
-
-- 中英文界面，以及始终可识别的中英双语语言菜单
-- 5 小时、7 天额度、重置时间和服务状态
-- Claude、CodeX 托盘图标及面板内容可分别配置
-- 每 1–5 分钟自动刷新，并支持立即刷新
-- App 内检查更新：AI Limit 会先用内置 Ed25519 公钥验证发布安装包，再打开标准安装向导
-
-**从源码构建**
-
-安装 Python 依赖、PyInstaller 和 Inno Setup 6，然后在 Windows PowerShell 中执行：
-
-```powershell
-pip install -r requirements.txt
-pip install pyinstaller
-cd menubar\windows
-pyinstaller pyinstaller.spec --noconfirm --clean
-& "$env:LOCALAPPDATA\Programs\Inno Setup 6\ISCC.exe" installer.iss
-```
-
----
-
 ## macOS 菜单栏 App
 
 常驻菜单栏，实时显示剩余额度，无需打开终端。由于直接在菜单栏显示文字数据，占用空间较大，建议配合 Bartender 等工具整理菜单栏。
@@ -115,15 +63,67 @@ bash make-dmg.sh
 
 ---
 
+## Windows 托盘 App
+
+Windows 版用两个紧凑的任务栏托盘图标分别显示 Claude Code 和 CodeX 额度；点击任意一个图标可打开共用详情面板。
+
+<table>
+  <tr>
+    <td align="center"><img src="docs/screenshot-windows-panel-v0324-zh.png" width="410" alt="AI Limit Windows 中文额度面板" /></td>
+    <td align="center"><img src="docs/screenshot-windows-menu-v0324-zh.png" width="445" alt="AI Limit Windows 中文托盘菜单" /></td>
+  </tr>
+  <tr>
+    <td align="center"><sub>额度面板</sub></td>
+    <td align="center"><sub>托盘菜单与设置</sub></td>
+  </tr>
+</table>
+
+托盘图标：<img src="docs/screenshot-windows-tray-icons-v0324.png" width="90" alt="Claude 与 CodeX Windows 托盘图标" />
+
+**安装**
+
+从最新的 [GitHub Release](https://github.com/zhuchenxi113/ai-limit/releases/latest) 或 [Gitee Release](https://gitee.com/zhuchenxi113/ai-limit/releases) 下载 `ai-limit-<版本>-setup.exe`。安装程序使用当前用户范围的可见安装向导，不需要管理员权限。
+
+> 当前 Windows 版本尚无 Authenticode 代码签名证书，Windows 可能显示“未知发布者”或 SmartScreen 警告。未签名版本出现该提示属于预期现象；如果文件名或下载来源不符合预期，请勿继续安装。
+
+**环境要求与首次启动**
+
+- Windows 11（目前实际验证的平台）
+- Firefox 已登录 [claude.ai](https://claude.ai) 和/或 [chatgpt.com](https://chatgpt.com)
+- Windows 上不支持读取 Chrome、Edge Cookie：它们的 App-Bound Encryption 会阻止第三方工具读取
+- Windows 初次注册托盘图标时，可能把两个图标放入任务栏折叠区。若希望始终看到额度，请打开折叠区，把 Claude 和 CodeX 图标拖到任务栏
+
+**功能**
+
+- 中英文界面，以及始终可识别的中英双语语言菜单
+- 5 小时、7 天额度、重置时间和服务状态
+- Claude、CodeX 托盘图标及面板内容可分别配置
+- 每 1–5 分钟自动刷新，并支持立即刷新
+- App 内检查更新：AI Limit 会先用内置 Ed25519 公钥验证发布安装包，再打开标准安装向导
+
+**从源码构建**
+
+安装 Python 依赖、PyInstaller 和 Inno Setup 6，然后在 Windows PowerShell 中执行：
+
+```powershell
+pip install -r requirements.txt
+pip install pyinstaller
+cd menubar\windows
+pyinstaller pyinstaller.spec --noconfirm --clean
+& "$env:LOCALAPPDATA\Programs\Inno Setup 6\ISCC.exe" installer.iss
+```
+
+---
+
 ## 命令行
 
-输出语言根据系统语言自动切换，无需手动设置。
+CLI 支持 macOS 和 Windows，输出语言根据系统语言自动切换，无需手动设置。以下截图来自 Windows PowerShell。
 
 ### 效果
 
-![CLI 截图（英文）](docs/screenshot-cli-v0321-en.png)
+![Windows PowerShell CLI 截图（英文）](docs/screenshot-cli-v0324-en.png)
 
-![CLI 截图（中文）](docs/screenshot-cli-v0324-zh.png)
+![Windows PowerShell CLI 截图（中文）](docs/screenshot-cli-v0324-zh.png)
 
 ### 环境要求
 

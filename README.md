@@ -10,58 +10,6 @@ A lightweight tool to monitor real-time **Claude Code** and **Codex** usage limi
 
 If you find it useful, a Star would be appreciated: [GitHub](https://github.com/zhuchenxi113/ai-limit) · [Gitee](https://gitee.com/zhuchenxi113/ai-limit)
 
-## Windows Tray App
-
-The Windows app shows Claude Code and Codex quota as two compact taskbar tray icons. Click either icon to open the shared detail panel.
-
-<table>
-  <tr>
-    <td align="center"><img src="docs/screenshot-windows-panel-v0324-en.png" width="410" alt="AI Limit Windows quota panel in English" /></td>
-    <td align="center"><img src="docs/screenshot-windows-menu-v0324-en.png" width="445" alt="AI Limit Windows tray menu in English" /></td>
-  </tr>
-  <tr>
-    <td align="center"><sub>Quota panel</sub></td>
-    <td align="center"><sub>Tray menu and settings</sub></td>
-  </tr>
-</table>
-
-Tray icons: <img src="docs/screenshot-windows-tray-icons-v0324.png" width="90" alt="Claude and Codex Windows tray icons" />
-
-**Install**
-
-Download `ai-limit-<version>-setup.exe` from the latest [GitHub Release](https://github.com/zhuchenxi113/ai-limit/releases/latest) or [Gitee Release](https://gitee.com/zhuchenxi113/ai-limit/releases). The installer uses a visible, per-user setup wizard and does not require administrator access.
-
-> The current Windows build does not have an Authenticode certificate. Windows may show **Unknown publisher** or a SmartScreen warning. This is expected for the unsigned release; do not continue if the filename or download source is unexpected.
-
-**Requirements and first launch**
-
-- Windows 11 (the currently verified target)
-- Firefox signed in to [claude.ai](https://claude.ai) and/or [chatgpt.com](https://chatgpt.com)
-- Chrome and Edge cookies are not supported on Windows because their App-Bound Encryption prevents third-party tools from reading them
-- Windows may initially place both new tray icons in the hidden overflow area. Open the taskbar overflow and drag the Claude and Codex icons onto the taskbar if you want the quota values always visible
-
-**Features**
-
-- Chinese / English UI, with an always-discoverable bilingual language menu
-- 5-hour and 7-day quota with reset times and service status
-- Independently configurable Claude and Codex tray icons and panel sections
-- Adjustable 1–5 minute refresh interval and manual refresh
-- In-app update checks: AI Limit verifies the release installer with its embedded Ed25519 public key before opening the standard setup wizard
-
-**Build from source**
-
-Install Python dependencies, PyInstaller, and Inno Setup 6, then run from Windows PowerShell:
-
-```powershell
-pip install -r requirements.txt
-pip install pyinstaller
-cd menubar\windows
-pyinstaller pyinstaller.spec --noconfirm --clean
-& "$env:LOCALAPPDATA\Programs\Inno Setup 6\ISCC.exe" installer.iss
-```
-
----
-
 ## macOS Menu Bar App
 
 Lives in the menu bar, shows live quota at a glance — no terminal needed. Because it displays text data directly in the menu bar, it takes up more space than a typical icon-only app; a menu bar manager like Bartender is recommended.
@@ -117,15 +65,67 @@ bash make-dmg.sh
 
 ---
 
+## Windows Tray App
+
+The Windows app shows Claude Code and Codex quota as two compact taskbar tray icons. Click either icon to open the shared detail panel.
+
+<table>
+  <tr>
+    <td align="center"><img src="docs/screenshot-windows-panel-v0324-en.png" width="410" alt="AI Limit Windows quota panel in English" /></td>
+    <td align="center"><img src="docs/screenshot-windows-menu-v0324-en.png" width="445" alt="AI Limit Windows tray menu in English" /></td>
+  </tr>
+  <tr>
+    <td align="center"><sub>Quota panel</sub></td>
+    <td align="center"><sub>Tray menu and settings</sub></td>
+  </tr>
+</table>
+
+Tray icons: <img src="docs/screenshot-windows-tray-icons-v0324.png" width="90" alt="Claude and Codex Windows tray icons" />
+
+**Install**
+
+Download `ai-limit-<version>-setup.exe` from the latest [GitHub Release](https://github.com/zhuchenxi113/ai-limit/releases/latest) or [Gitee Release](https://gitee.com/zhuchenxi113/ai-limit/releases). The installer uses a visible, per-user setup wizard and does not require administrator access.
+
+> The current Windows build does not have an Authenticode certificate. Windows may show **Unknown publisher** or a SmartScreen warning. This is expected for the unsigned release; do not continue if the filename or download source is unexpected.
+
+**Requirements and first launch**
+
+- Windows 11 (the currently verified target)
+- Firefox signed in to [claude.ai](https://claude.ai) and/or [chatgpt.com](https://chatgpt.com)
+- Chrome and Edge cookies are not supported on Windows because their App-Bound Encryption prevents third-party tools from reading them
+- Windows may initially place both new tray icons in the hidden overflow area. Open the taskbar overflow and drag the Claude and Codex icons onto the taskbar if you want the quota values always visible
+
+**Features**
+
+- Chinese / English UI, with an always-discoverable bilingual language menu
+- 5-hour and 7-day quota with reset times and service status
+- Independently configurable Claude and Codex tray icons and panel sections
+- Adjustable 1–5 minute refresh interval and manual refresh
+- In-app update checks: AI Limit verifies the release installer with its embedded Ed25519 public key before opening the standard setup wizard
+
+**Build from source**
+
+Install Python dependencies, PyInstaller, and Inno Setup 6, then run from Windows PowerShell:
+
+```powershell
+pip install -r requirements.txt
+pip install pyinstaller
+cd menubar\windows
+pyinstaller pyinstaller.spec --noconfirm --clean
+& "$env:LOCALAPPDATA\Programs\Inno Setup 6\ISCC.exe" installer.iss
+```
+
+---
+
 ## CLI
 
-Output language is detected automatically from your system locale.
+The CLI supports macOS and Windows, and its output language is detected automatically from your system locale. The screenshots below were captured in Windows PowerShell.
 
 ### Preview
 
-![CLI screenshot (English)](docs/screenshot-cli-v0321-en.png)
+![CLI in Windows PowerShell (English)](docs/screenshot-cli-v0324-en.png)
 
-![CLI screenshot (Chinese)](docs/screenshot-cli-v0324-zh.png)
+![CLI in Windows PowerShell (Chinese)](docs/screenshot-cli-v0324-zh.png)
 
 ### Requirements
 
