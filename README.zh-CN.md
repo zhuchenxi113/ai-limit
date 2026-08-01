@@ -20,10 +20,7 @@
 
 ![菜单栏上下文](docs/screenshot-menubar-3.png)
 
-<table><tr>
-  <td><img src="docs/screenshot-menubar-dropdown-v0321-en.png" width="280" /></td>
-  <td><img src="docs/screenshot-menubar-dropdown-v0321.png" width="280" /></td>
-</tr></table>
+<p align="center"><img src="docs/screenshot-menubar-dropdown-v0321.png" width="360" alt="AI Limit macOS 中文菜单" /></p>
 
 **一键安装**
 
@@ -39,8 +36,8 @@ App 已用 Developer ID 签名并通过 Apple 公证，正常情况下双击即�
 - **macOS 14 Sonoma 及更早：** 右键（Control 点按）App → **打开** → 对话框里再点**打开**。
 
 <table><tr>
-  <td><img src="docs/install-blocked-dialog.png" width="300" /></td>
-  <td><img src="docs/install-open-anyway.png" width="440" /></td>
+  <td><img src="docs/install-blocked-dialog.png" height="360" alt="macOS 拦截提示" /></td>
+  <td><img src="docs/install-open-anyway.png" height="360" alt="macOS 仍要打开设置" /></td>
 </tr></table>
 
 **功能**
@@ -69,8 +66,8 @@ Windows 版用两个紧凑的任务栏托盘图标分别显示 Claude Code 和 C
 
 <table>
   <tr>
-    <td align="center"><img src="docs/screenshot-windows-panel-v0324-zh.png" width="410" alt="AI Limit Windows 中文额度面板" /></td>
-    <td align="center"><img src="docs/screenshot-windows-menu-v0324-zh.png" width="445" alt="AI Limit Windows 中文托盘菜单" /></td>
+    <td align="center"><img src="docs/screenshot-windows-panel-v0324-zh.png" height="360" alt="AI Limit Windows 中文额度面板" /></td>
+    <td align="center"><img src="docs/screenshot-windows-menu-v0324-zh.png" height="360" alt="AI Limit Windows 中文托盘菜单" /></td>
   </tr>
   <tr>
     <td align="center"><sub>额度面板</sub></td>
@@ -123,29 +120,11 @@ CLI 支持 macOS 和 Windows，输出语言根据系统语言自动切换，无�
 
 #### macOS 终端
 
-<table>
-  <tr>
-    <td align="center"><img src="docs/screenshot-cli-v0321-en.png" width="430" alt="AI Limit macOS 终端 CLI 英文效果" /></td>
-    <td align="center"><img src="docs/screenshot-cli-v0321.png" width="300" alt="AI Limit macOS 终端 CLI 中文效果" /></td>
-  </tr>
-  <tr>
-    <td align="center"><sub>English</sub></td>
-    <td align="center"><sub>中文</sub></td>
-  </tr>
-</table>
+<p align="center"><img src="docs/screenshot-cli-v0321.png" height="500" alt="AI Limit macOS 终端 CLI 中文效果" /></p>
 
 #### Windows PowerShell
 
-<table>
-  <tr>
-    <td align="center"><img src="docs/screenshot-cli-v0324-en.png" width="430" alt="AI Limit Windows PowerShell CLI 英文效果" /></td>
-    <td align="center"><img src="docs/screenshot-cli-v0324-zh.png" width="430" alt="AI Limit Windows PowerShell CLI 中文效果" /></td>
-  </tr>
-  <tr>
-    <td align="center"><sub>English</sub></td>
-    <td align="center"><sub>中文</sub></td>
-  </tr>
-</table>
+<p align="center"><img src="docs/screenshot-cli-v0324-zh.png" height="500" alt="AI Limit Windows PowerShell CLI 中文效果" /></p>
 
 ### 环境要求
 

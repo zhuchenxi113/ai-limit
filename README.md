@@ -16,14 +16,7 @@ Lives in the menu bar, shows live quota at a glance — no terminal needed. Beca
 
 ![Menu bar screenshot](docs/screenshot-menubar.png)
 
-![Menu bar in context](docs/screenshot-menubar-2.png)
-
-![Menu bar in context](docs/screenshot-menubar-3.png)
-
-<table><tr>
-  <td><img src="docs/screenshot-menubar-dropdown-v0321-en.png" width="280" /></td>
-  <td><img src="docs/screenshot-menubar-dropdown-v0321.png" width="280" /></td>
-</tr></table>
+<p align="center"><img src="docs/screenshot-menubar-dropdown-v0321-en.png" width="360" alt="AI Limit macOS menu in English" /></p>
 
 **One-line install**
 
@@ -37,13 +30,6 @@ The app is signed with a Developer ID and notarized by Apple, so it should open 
 
 - **macOS 15 Sequoia and later:** double-click the app. If the dialog only offers **Done** / **Move to Trash**, click **Done**, then open **System Settings → Privacy & Security**, scroll to **Security**, and click **Open Anyway** next to the blocked AI Limit message. Confirm with your password or Touch ID.
 - **macOS 14 Sonoma and earlier:** right-click (Control-click) the app → **Open** → **Open** in the dialog.
-
-<table><tr>
-  <td><img src="docs/install-blocked-dialog.png" width="300" /></td>
-  <td><img src="docs/install-open-anyway.png" width="440" /></td>
-</tr></table>
-
-> The screenshots are from a Chinese-language system. On an English system the same controls read **Done**, **Move to Trash**, and **Privacy & Security → Open Anyway**.
 
 **Features**
 
@@ -71,8 +57,8 @@ The Windows app shows Claude Code and Codex quota as two compact taskbar tray ic
 
 <table>
   <tr>
-    <td align="center"><img src="docs/screenshot-windows-panel-v0324-en.png" width="410" alt="AI Limit Windows quota panel in English" /></td>
-    <td align="center"><img src="docs/screenshot-windows-menu-v0324-en.png" width="445" alt="AI Limit Windows tray menu in English" /></td>
+    <td align="center"><img src="docs/screenshot-windows-panel-v0324-en.png" height="360" alt="AI Limit Windows quota panel in English" /></td>
+    <td align="center"><img src="docs/screenshot-windows-menu-v0324-en.png" height="360" alt="AI Limit Windows tray menu in English" /></td>
   </tr>
   <tr>
     <td align="center"><sub>Quota panel</sub></td>
@@ -125,29 +111,11 @@ The CLI supports macOS and Windows, and its output language is detected automati
 
 #### macOS Terminal
 
-<table>
-  <tr>
-    <td align="center"><img src="docs/screenshot-cli-v0321-en.png" width="430" alt="AI Limit CLI in macOS Terminal, English" /></td>
-    <td align="center"><img src="docs/screenshot-cli-v0321.png" width="300" alt="AI Limit CLI in macOS Terminal, Chinese" /></td>
-  </tr>
-  <tr>
-    <td align="center"><sub>English</sub></td>
-    <td align="center"><sub>中文</sub></td>
-  </tr>
-</table>
+<p align="center"><img src="docs/screenshot-cli-v0321-en.png" height="500" alt="AI Limit CLI in macOS Terminal, English" /></p>
 
 #### Windows PowerShell
 
-<table>
-  <tr>
-    <td align="center"><img src="docs/screenshot-cli-v0324-en.png" width="430" alt="AI Limit CLI in Windows PowerShell, English" /></td>
-    <td align="center"><img src="docs/screenshot-cli-v0324-zh.png" width="430" alt="AI Limit CLI in Windows PowerShell, Chinese" /></td>
-  </tr>
-  <tr>
-    <td align="center"><sub>English</sub></td>
-    <td align="center"><sub>中文</sub></td>
-  </tr>
-</table>
+<p align="center"><img src="docs/screenshot-cli-v0324-en.png" height="500" alt="AI Limit CLI in Windows PowerShell, English" /></p>
 
 ### Requirements
 
