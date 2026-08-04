@@ -147,6 +147,16 @@ ai-limit 只读取你本机已有的 Claude / ChatGPT 登录态与本地使用�
 
 ### 安装
 
+**Windows：一键安装（PowerShell）**
+
+```powershell
+irm https://raw.githubusercontent.com/zhuchenxi113/ai-limit/main/install.ps1 | iex
+```
+
+这会下载一个独立的 `ai-limit.exe`（不需要安装 Python），并加入你的用户 `PATH`。之后新开一个 PowerShell（或 Windows Terminal / WSL2）窗口，直接运行 `ai-limit` 即可。只写入当前用户范围的 `PATH`，不需要管理员权限。这跟上面的 Windows 托盘 App 安装程序是两回事，装一个不会自动装另一个。
+
+**macOS / 任意平台手动安装：克隆源码运行**
+
 **1. 克隆项目**
 
 ```bash

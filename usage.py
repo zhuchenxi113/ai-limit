@@ -137,24 +137,93 @@ REMOTE_TIMEOUT_SEC = 15
 CLAUDE_WEB_TIMEOUT_SEC = 15
 
 
+_ZH_TRADITIONAL_REGIONS = ("tw", "hk", "mo")
+_ZH_SIMPLIFIED_REGIONS = ("cn", "sg")
+
+
+def _classify_lang_tag(tag: str) -> str:
+    """把语言标签 / locale 字符串 / Windows 本地化显示名分成三态：
+    "zh-Hans"（简体）/ "zh-Hant"（繁体）/ "en"。
+
+    输入格式不统一（env var 可能是 "zh-Hant"、POSIX locale 可能是 "zh_TW.UTF-8"、
+    Windows locale.getlocale() 可能是 "Chinese (Traditional)_Taiwan" 这种本地化
+    显示名），所以用子串匹配而不是严格的 endswith。地区码分不清简繁时，保持
+    改造前的默认行为——当成简体。
+    """
+    lower = tag.lower()
+    if not (lower.startswith("zh") or "chinese" in lower):
+        return "en"
+    # BCP-47 缩写（hant/hans）和 Windows 本地化显示名里拼出来的英文单词
+    # （"Chinese (Traditional)_Taiwan"）都要认，两种格式都真实出现过。
+    if "hant" in lower or "traditional" in lower:
+        return "zh-Hant"
+    if "hans" in lower or "simplified" in lower:
+        return "zh-Hans"
+    for region in _ZH_TRADITIONAL_REGIONS:
+        if region in lower:
+            return "zh-Hant"
+    for region in _ZH_SIMPLIFIED_REGIONS:
+        if region in lower:
+            return "zh-Hans"
+    return "zh-Hans"
+
+
+def _windows_ui_language_tag():
+    """取 Windows「设置 → 时间和语言 → 语言」里的首选 UI 语言标签（如 "zh-Hant-TW"）。
+
+    跟 menubar/windows/lang_win.py 用同一个 GetUserPreferredUILanguages API，
+    这里单独实现一份是因为 usage.py 是独立可用的 CLI 模块，不依赖 menubar/
+    目录存在。GetUserDefaultUILanguage() 解出的 LANGID 数字常量已被 Microsoft
+    标记为不推荐，改用这个 API 直接拿可读语言标签。
+    """
+    import ctypes
+    from ctypes import wintypes
+
+    _MUI_LANGUAGE_NAME = 0x8
+    kernel32 = ctypes.windll.kernel32
+    kernel32.GetUserPreferredUILanguages.argtypes = (
+        wintypes.DWORD,
+        ctypes.POINTER(wintypes.ULONG),
+        ctypes.c_wchar_p,
+        ctypes.POINTER(wintypes.ULONG),
+    )
+    kernel32.GetUserPreferredUILanguages.restype = wintypes.BOOL
+
+    num_langs = wintypes.ULONG(0)
+    buf_len = wintypes.ULONG(0)
+    kernel32.GetUserPreferredUILanguages(
+        _MUI_LANGUAGE_NAME, ctypes.byref(num_langs), None, ctypes.byref(buf_len)
+    )
+    if buf_len.value == 0:
+        return None
+    buf = ctypes.create_unicode_buffer(buf_len.value)
+    ok = kernel32.GetUserPreferredUILanguages(
+        _MUI_LANGUAGE_NAME, ctypes.byref(num_langs), buf, ctypes.byref(buf_len)
+    )
+    if not ok:
+        return None
+    raw = buf[: buf_len.value]
+    langs = [s for s in raw.split("\x00") if s]
+    return langs[0] if langs else None
+
+
 def _detect_lang() -> str:
     env = os.environ.get("AI_LIMIT_LANG", "")
     if env:
-        return "zh" if env.lower().startswith("zh") else "en"
+        return _classify_lang_tag(env)
     # Windows 的 locale.getlocale() 返回本地化显示名（如 'Chinese (Simplified)_China'），
     # 不是 POSIX 的 'zh_CN'，直接 startswith('zh') 会把中文用户漏判成英文——macOS 返回
-    # 'zh_CN' 正常，所以这个坑只在 Windows 上出现。改用可靠的 UI 语言 API：主语言 ID
-    # 0x04 = 中文（与 macOS 的 zh_* 检测对齐）。
+    # 'zh_CN' 正常，所以这个坑只在 Windows 上出现。改用可靠的 UI 语言 API。
     if IS_WINDOWS:
         try:
-            import ctypes
-            langid = ctypes.windll.kernel32.GetUserDefaultUILanguage()
-            return "zh" if (langid & 0x3FF) == 0x04 else "en"
+            tag = _windows_ui_language_tag()
+            if tag:
+                return _classify_lang_tag(tag)
         except Exception:
             pass
     try:
         loc = (_locale.getlocale()[0] or os.environ.get("LANG", "")).lower()
-        return "zh" if (loc.startswith("zh") or "chinese" in loc) else "en"
+        return _classify_lang_tag(loc)
     except Exception:
         return "en"
 
@@ -162,8 +231,12 @@ def _detect_lang() -> str:
 LANG = _detect_lang()
 
 
-def t(zh: str, en: str) -> str:
-    return zh if LANG == "zh" else en
+def t(zh_hans: str, zh_hant: str, en: str) -> str:
+    if LANG == "zh-Hant":
+        return zh_hant
+    if LANG == "zh-Hans":
+        return zh_hans
+    return en
 
 
 # ── 工具函数 ─────────────────────────────────────────────────────────────────
@@ -338,8 +411,17 @@ def fmt_plan(plan: str) -> str:
 
 
 def fmt_timezone(dt: datetime.datetime = None) -> str:
-    """Return a localized timezone label without leaking OS-localized text into English."""
-    if LANG == "zh":
+    """Return a localized timezone label without leaking OS text in the wrong script.
+
+    macOS 的 strftime('%Z') 本身是语言无关的 ASCII 缩写（如 "CST"），任何
+    LANG 下都安全。Windows 的 strftime('%Z') 则跟随系统区域设置返回完整
+    本地化名称（如"中国标准时间"）；当系统区域设置是简体（多数中文
+    Windows 用户的默认状态）、而用户用 AI_LIMIT_LANG 显式切到 zh-Hant 时，
+    这段 OS 文本不会跟着变繁体，会在繁体输出里混入简体字（2026-08-04
+    实测复现）。所以 Windows 上 zh-Hant 改走跟 en 一样的数字 UTC 偏移，
+    绕开 OS 文本；zh-Hans 和 macOS 的 OS 原生文本本身跟场景一致，继续沿用。
+    """
+    if LANG != "en" and not (LANG == "zh-Hant" and IS_WINDOWS):
         return TZ_ABBR
     value = dt or datetime.datetime.now(TZ_LOCAL)
     offset = value.utcoffset()
@@ -368,24 +450,13 @@ def fmt_dt(dt: datetime.datetime) -> str:
 
 
 def fmt_reset_dt(dt: datetime.datetime) -> str:
-    _bare_zh = ["一", "二", "三", "四", "五", "六", "日"]
+    _bare_zh = ["一", "二", "三", "四", "五", "六", "日"]  # 数字部分简繁同字
     _bare_en = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
     today = datetime.datetime.now(TZ_LOCAL).date()
     target = dt.date()
     days = (target - today).days
     next_week = target.isocalendar()[:2] > today.isocalendar()[:2]
-    if LANG == "zh":
-        if days == 0:
-            wd = "今天  "
-        elif days == 1:
-            wd = "明天  "
-        elif days == 2:
-            wd = "后天  "
-        elif next_week:
-            wd = f"下周{_bare_zh[dt.weekday()]}"
-        else:
-            wd = f"周{_bare_zh[dt.weekday()]}  "
-    else:
+    if LANG == "en":
         if days == 0:
             wd = "today   "
         elif days == 1:
@@ -396,6 +467,28 @@ def fmt_reset_dt(dt: datetime.datetime) -> str:
             wd = f"next {_bare_en[dt.weekday()]}"
         else:
             wd = f"{_bare_en[dt.weekday()]:<8}"
+    elif LANG == "zh-Hant":
+        if days == 0:
+            wd = "今天  "
+        elif days == 1:
+            wd = "明天  "
+        elif days == 2:
+            wd = "後天  "
+        elif next_week:
+            wd = f"下週{_bare_zh[dt.weekday()]}"
+        else:
+            wd = f"週{_bare_zh[dt.weekday()]}  "
+    else:
+        if days == 0:
+            wd = "今天  "
+        elif days == 1:
+            wd = "明天  "
+        elif days == 2:
+            wd = "后天  "
+        elif next_week:
+            wd = f"下周{_bare_zh[dt.weekday()]}"
+        else:
+            wd = f"周{_bare_zh[dt.weekday()]}  "
     return f"{wd} {dt.strftime('%m-%d %H:%M')} {fmt_timezone(dt)}"
 
 
@@ -458,6 +551,7 @@ def _claude_web_context(referer: str, browser: str = "auto") -> tuple[str, dict]
     except ImportError:
         raise ClaudeWebError(t(
             "未安装 browser_cookie3，请先运行: pip install browser-cookie3",
+            "未安裝 browser_cookie3，請先執行：pip install browser-cookie3",
             "browser_cookie3 not installed, run: pip install browser-cookie3",
         ))
 
@@ -481,12 +575,15 @@ def _claude_web_context(referer: str, browser: str = "auto") -> tuple[str, dict]
     if not cookies:
         detail = f" ({'; '.join(errs)})" if errs else ""
         hint_zh = "，请先在浏览器登录 claude.ai"
+        hint_hant = "，請先在瀏覽器登入 claude.ai"
         hint_en = ", please log in to claude.ai first"
         if IS_WINDOWS:
             hint_zh += "（Windows 上 Chrome/Edge 因新版加密保护无法读取 Cookie，请改用 Firefox 登录后重试）"
+            hint_hant += "（Windows 上 Chrome/Edge 因新版加密保護無法讀取 Cookie，請改用 Firefox 登入後重試）"
             hint_en += " (on Windows, Chrome/Edge cookies can't be read due to App-Bound Encryption — please log in via Firefox instead)"
         raise ClaudeWebError(t(
             f"无法读取浏览器 cookie{detail}{hint_zh}",
+            f"無法讀取瀏覽器 cookie{detail}{hint_hant}",
             f"cannot read browser cookies{detail}{hint_en}",
         ), kind="browser_session")
 
@@ -495,6 +592,7 @@ def _claude_web_context(referer: str, browser: str = "auto") -> tuple[str, dict]
     if not org_id:
         raise ClaudeWebError(t(
             "未能从 cookie 读取 org ID，请先在浏览器打开 claude.ai",
+            "未能從 cookie 讀取 org ID，請先在瀏覽器開啟 claude.ai",
             "could not read org ID from cookie, please open claude.ai in your browser",
         ), kind="browser_session")
 
@@ -587,12 +685,14 @@ def _claude_web_get(path: str, headers: dict, timeout: int) -> dict:
         if is_cf:
             raise ClaudeWebError(t(
                 "claude.ai 触发了 Cloudflare 人机验证，请在浏览器打开 claude.ai 通过验证后重试",
+                "claude.ai 觸發了 Cloudflare 人機驗證，請在瀏覽器開啟 claude.ai 通過驗證後重試",
                 "claude.ai is showing a Cloudflare human-verification challenge; "
                 "open claude.ai in your browser, pass it, then retry",
             ), kind="cloudflare")
         if e.code in (401, 403):
             raise ClaudeWebError(t(
                 "claude.ai 登录态已失效，请在浏览器重新登录",
+                "claude.ai 登入狀態已失效，請在瀏覽器重新登入",
                 "claude.ai session expired, please re-login in your browser",
             ), kind="auth")
         raise ClaudeWebError(f"HTTP {e.code}: {raw[:300]}")
@@ -908,6 +1008,7 @@ def _load_chatgpt_cookies(browser: str = "auto"):
     except ImportError:
         raise CodexWebError(t(
             "未安装 browser_cookie3，请先运行: pip install browser-cookie3",
+            "未安裝 browser_cookie3，請先執行：pip install browser-cookie3",
             "browser_cookie3 not installed, run: pip install browser-cookie3",
         ))
     errs = []
@@ -927,12 +1028,15 @@ def _load_chatgpt_cookies(browser: str = "auto"):
             errs.append(f"{name}: {e}")
     detail = f" ({'; '.join(errs)})" if errs else ""
     hint_zh = "，请先在浏览器登录 chatgpt.com"
+    hint_hant = "，請先在瀏覽器登入 chatgpt.com"
     hint_en = ", please log in to chatgpt.com in your browser"
     if IS_WINDOWS:
         hint_zh += "（Windows 上 Chrome/Edge 因新版加密保护无法读取 Cookie，请改用 Firefox 登录后重试）"
+        hint_hant += "（Windows 上 Chrome/Edge 因新版加密保護無法讀取 Cookie，請改用 Firefox 登入後重試）"
         hint_en += " (on Windows, Chrome/Edge cookies can't be read due to App-Bound Encryption — please log in via Firefox instead)"
     raise CodexWebError(t(
         f"无法读取 chatgpt.com cookie{detail}{hint_zh}",
+        f"無法讀取 chatgpt.com cookie{detail}{hint_hant}",
         f"cannot read chatgpt.com cookies{detail}{hint_en}",
     ), kind="browser_session")
 
@@ -979,6 +1083,7 @@ def _get_chatgpt_access_token(cookie_header: str, timeout: int) -> str:
     if not token:
         raise CodexWebError(t(
             "请先在浏览器登录 chatgpt.com",
+            "請先在瀏覽器登入 chatgpt.com",
             "please log in to chatgpt.com in your browser",
         ), kind="auth")
     return token
@@ -1035,6 +1140,7 @@ def live_codex_web_usage(timeout: int = CLAUDE_WEB_TIMEOUT_SEC, browser: str = "
             raise CodexAuthError(
                 t(
                     f"HTTP {e.code}：未登录 ChatGPT 或无 Codex 权限（可能未订阅，或需重新登录）",
+                    f"HTTP {e.code}：未登入 ChatGPT 或無 Codex 權限（可能未訂閱，或需重新登入）",
                     f"HTTP {e.code}: not signed in to ChatGPT or no Codex access (subscription may be required)",
                 )
             )
@@ -1075,6 +1181,9 @@ def _prompt_app_server_confirm() -> bool:
         "Web 查询失败，且当前窗口未激活。\n"
         "继续调用 app-server 会触发新的 Codex 5 小时冷却窗口。\n"
         "确认继续？[y/N]: ",
+        "Web 查詢失敗，且目前窗口未啟用。\n"
+        "繼續呼叫 app-server 會觸發新的 Codex 5 小時冷卻窗口。\n"
+        "確認繼續？[y/N]: ",
         "Web fetch failed and no active window cached.\n"
         "Calling app-server will trigger a new Codex 5-hour cooldown.\n"
         "Continue? [y/N]: ",
@@ -1236,10 +1345,10 @@ def render_claude(totals: dict, since: datetime.datetime, days_count: int,
     print(f"{_BOLD}{title.center(52)}{_RST}")
     print()
     since_local = since.astimezone(TZ_LOCAL)
-    print(f"  {_DIM}{t('统计自', 'Since')}: {fmt_dt(since_local)}  ({t(f'近 {days_count} 天', f'last {days_count} days')}){_RST}")
+    print(f"  {_DIM}{t('统计自', '統計自', 'Since')}: {fmt_dt(since_local)}  ({t(f'近 {days_count} 天', f'近 {days_count} 天', f'last {days_count} days')}){_RST}")
 
     if not totals:
-        print(t("  （该时间段无记录）", "  (no records in this period)"))
+        print(t("  （该时间段无记录）", "  （該時間段無記錄）", "  (no records in this period)"))
         return
 
     active = {m: d for m, d in totals.items() if m != "<synthetic>"}
@@ -1255,22 +1364,22 @@ def render_claude(totals: dict, since: datetime.datetime, days_count: int,
             if show_ratio:
                 pct = d["output"] / grand_out * 100
                 pct_s = '<1%' if pct < 1 else f'{pct:.0f}%'
-                ratio_str = t(f"  (占总输出 {pct_s})", f"  ({pct_s} of total output)")
+                ratio_str = t(f"  (占总输出 {pct_s})", f"  (佔總輸出 {pct_s})", f"  ({pct_s} of total output)")
             else:
                 ratio_str = ""
             print(f"  {model}")
-            print(f"    {t('调用次数', 'Calls')}: {d['calls']:,}")
-            print(f"    {t('输入合计', 'Input')}: {fmt_tokens(total_in):>8}  ({t(f'缓存命中 {cache_pct:.0f}%', f'cache hit {cache_pct:.0f}%')})")
-            print(f"    {t('输出合计', 'Output')}: {fmt_tokens(d['output']):>8}{ratio_str}")
+            print(f"    {t('调用次数', '調用次數', 'Calls')}: {d['calls']:,}")
+            print(f"    {t('输入合计', '輸入合計', 'Input')}: {fmt_tokens(total_in):>8}  ({t(f'缓存命中 {cache_pct:.0f}%', f'快取命中 {cache_pct:.0f}%', f'cache hit {cache_pct:.0f}%')})")
+            print(f"    {t('输出合计', '輸出合計', 'Output')}: {fmt_tokens(d['output']):>8}{ratio_str}")
             actual_days = len(d["days"])
             if actual_days > 0:
                 rate = d["output"] / actual_days
-                print(f"    {t('日均输出', 'Daily avg')}: {fmt_tokens(int(rate)):>8}  ({t(f'共 {actual_days} 天有记录', f'{actual_days} days recorded')})")
+                print(f"    {t('日均输出', '日均輸出', 'Daily avg')}: {fmt_tokens(int(rate)):>8}  ({t(f'共 {actual_days} 天有记录', f'共 {actual_days} 天有記錄', f'{actual_days} days recorded')})")
             print()
 
-    print(f"  {t('总输出', 'Total output')}: {_BOLD}{fmt_tokens(grand_out)}{_RST}  |  {t('净输入(非缓存)', 'Net input (non-cache)')}: {_BOLD}{fmt_tokens(grand_in_net)}{_RST}")
+    print(f"  {t('总输出', '總輸出', 'Total output')}: {_BOLD}{fmt_tokens(grand_out)}{_RST}  |  {t('净输入(非缓存)', '淨輸入(非快取)', 'Net input (non-cache)')}: {_BOLD}{fmt_tokens(grand_in_net)}{_RST}")
     if detail and show_ratio:
-        print(f"\n  {_BOLD}{t('输出占比', 'Output share')}{_RST}")
+        print(f"\n  {_BOLD}{t('输出占比', '輸出佔比', 'Output share')}{_RST}")
         name_w = max(len(m.replace("claude-", "")) for m in active)
         for m in sorted(active.keys(), key=lambda x: active[x]["output"], reverse=True):
             pct = active[m]["output"] / grand_out * 100
@@ -1281,25 +1390,25 @@ def render_claude(totals: dict, since: datetime.datetime, days_count: int,
         five_h = web_data.get("five_hour") or {}
         seven_d = web_data.get("seven_day") or {}
         if five_h or seven_d:
-            print(f"\n  {_BOLD}{t('实时额度', 'Live quota')}{_RST}  {_DIM}{t('(与 --days 统计范围无关)', '(independent of --days range)')}{_RST}")
-            print(f"  {_DIM}{t('数据来源', 'Source')}: claude.ai usage API  ({t('浏览器登录态', 'browser session')}){_RST}")
+            print(f"\n  {_BOLD}{t('实时额度', '實時額度', 'Live quota')}{_RST}  {_DIM}{t('(与 --days 统计范围无关)', '(與 --days 統計範圍無關)', '(independent of --days range)')}{_RST}")
+            print(f"  {_DIM}{t('数据来源', '資料來源', 'Source')}: claude.ai usage API  ({t('浏览器登录态', '瀏覽器登入狀態', 'browser session')}){_RST}")
             print()
             for win_key, label, win in [
-                ("5h", t("5小时滚动窗", "5-hour window"), five_h),
-                ("7d", t("7天滚动窗  ", "7-day window "), seven_d),
+                ("5h", t("5小时滚动窗", "5小時滾動窗", "5-hour window"), five_h),
+                ("7d", t("7天滚动窗  ", "7天滾動窗  ", "7-day window "), seven_d),
             ]:
                 if not win:
                     continue
                 used = float(win.get("utilization", 0))
                 remaining = remaining_percent(used)
                 r_str = f"{_bc(remaining)}{_BOLD}{remaining:.0f}%{_RST}"
-                print(f"  {label}  {_colored_bar(remaining)}  {t(f'剩余 {r_str}  {_DIM}(已用 {used:.0f}%){_RST}', f'left {r_str}  {_DIM}(used {used:.0f}%){_RST}')}")
+                print(f"  {label}  {_colored_bar(remaining)}  {t(f'剩余 {r_str}  {_DIM}(已用 {used:.0f}%){_RST}', f'剩餘 {r_str}  {_DIM}(已用 {used:.0f}%){_RST}', f'left {r_str}  {_DIM}(used {used:.0f}%){_RST}')}")
                 resets_at = win.get("resets_at")
                 reset_dt = None
                 if resets_at:
                     try:
                         reset_dt = datetime.datetime.fromisoformat(resets_at).astimezone(TZ_LOCAL)
-                        print(f"  {_DIM}{t('重置时间', 'Resets at')}: {fmt_reset_dt(reset_dt)}{_RST}")
+                        print(f"  {_DIM}{t('重置时间', '重置時間', 'Resets at')}: {fmt_reset_dt(reset_dt)}{_RST}")
                     except Exception:
                         pass
                 printed_estimate = False
@@ -1311,19 +1420,19 @@ def render_claude(totals: dict, since: datetime.datetime, days_count: int,
                         rate = used / (elapsed.total_seconds() / 3600)
                         if rate > 0:
                             hours_left = remaining / rate
-                            print(f"\n  📊 {_DIM}{t(f'按当前速率 ({rate:.1f}%/小时)，剩余 {remaining:.0f}% 约可用', f'At current rate ({rate:.1f}%/hr), {remaining:.0f}% left ≈')}{_RST} {_BOLD}{hours_left:.0f} {t('小时', 'hrs')}{_RST}")
+                            print(f"\n  📊 {_DIM}{t(f'按当前速率 ({rate:.1f}%/小时)，剩余 {remaining:.0f}% 约可用', f'按目前速率 ({rate:.1f}%/小時)，剩餘 {remaining:.0f}% 約可用', f'At current rate ({rate:.1f}%/hr), {remaining:.0f}% left ≈')}{_RST} {_BOLD}{hours_left:.0f} {t('小时', '小時', 'hrs')}{_RST}")
                             printed_estimate = True
                 if not printed_estimate:
                     print()
         else:
-            print(f"\n  {t('claude.ai usage 原始响应', 'claude.ai usage raw response')}: {json.dumps(web_data, ensure_ascii=False)[:400]}")
-            print(f"  →  {CLAUDE_USAGE_URL}  ({t('Cmd+双击打开', 'Cmd+double-click to open')})")
+            print(f"\n  {t('claude.ai usage 原始响应', 'claude.ai usage 原始回應', 'claude.ai usage raw response')}: {json.dumps(web_data, ensure_ascii=False)[:400]}")
+            print(f"  →  {CLAUDE_USAGE_URL}  ({t('Cmd+双击打开', 'Cmd+雙擊開啟', 'Cmd+double-click to open')})")
     elif web_error:
-        print(f"\n  {t('实时额度  (与 --days 统计范围无关)', 'Live quota  (independent of --days range)')}")
-        print(f"  ⚠️  {t('读取失败', 'Failed to fetch')}: {fmt_error(web_error)}")
-        print(f"  →  {CLAUDE_USAGE_URL}  ({t('Cmd+双击打开', 'Cmd+double-click to open')})")
+        print(f"\n  {t('实时额度  (与 --days 统计范围无关)', '實時額度  (與 --days 統計範圍無關)', 'Live quota  (independent of --days range)')}")
+        print(f"  ⚠️  {t('读取失败', '讀取失敗', 'Failed to fetch')}: {fmt_error(web_error)}")
+        print(f"  →  {CLAUDE_USAGE_URL}  ({t('Cmd+双击打开', 'Cmd+雙擊開啟', 'Cmd+double-click to open')})")
     else:
-        print(f"\n  ⚠️  {t('Claude 周额度百分比本地不可得', 'Claude quota unavailable locally')}  →  {CLAUDE_USAGE_URL}  ({t('Cmd+双击打开', 'Cmd+double-click to open')})")
+        print(f"\n  ⚠️  {t('Claude 周额度百分比本地不可得', 'Claude 週額度百分比本地不可得', 'Claude quota unavailable locally')}  →  {CLAUDE_USAGE_URL}  ({t('Cmd+双击打开', 'Cmd+雙擊開啟', 'Cmd+double-click to open')})")
 
 
 def _rolling_window_label(window_minutes):
@@ -1334,13 +1443,13 @@ def _rolling_window_label(window_minutes):
     但字段位置仍叫 primary——必须按实际时长算标签，不能按字段名硬编码。
     """
     if not window_minutes:
-        return t("额度窗口  ", "quota window ")
+        return t("额度窗口  ", "額度窗口  ", "quota window ")
     hours = window_minutes / 60
     if hours < 24:
         n = round(hours) or 1
-        return t(f"{n}小时滚动窗", f"{n}-hour window")
+        return t(f"{n}小时滚动窗", f"{n}小時滾動窗", f"{n}-hour window")
     days = round(hours / 24)
-    return t(f"{days}天滚动窗  ", f"{days}-day window ")
+    return t(f"{days}天滚动窗  ", f"{days}天滾動窗  ", f"{days}-day window ")
 
 
 def _classify_codex_windows(rl):
@@ -1371,7 +1480,7 @@ def _print_codex_window_row(label, window, *, source, data_age_min, now_local, m
     """打印一档 Codex 额度窗口；window=None 时打印占位行（标签 + "?"）而不是
     直接跳过——见 _classify_codex_windows 的 docstring，缺数据可能只是临时的。"""
     if window is None:
-        print(f"  {label}  {_colored_bar(0)}  {t(f'剩余 ?  {_DIM}({missing_note}){_RST}', f'left ?  {_DIM}({missing_note}){_RST}')}")
+        print(f"  {label}  {_colored_bar(0)}  {t(f'剩余 ?  {_DIM}({missing_note}){_RST}', f'剩餘 ?  {_DIM}({missing_note}){_RST}', f'left ?  {_DIM}({missing_note}){_RST}')}")
         return False
     pct = window.get("used_percent", 0)
     remaining = remaining_percent(pct)
@@ -1381,18 +1490,18 @@ def _print_codex_window_row(label, window, *, source, data_age_min, now_local, m
     if stale:
         if reset and now_local >= reset:
             full_str = f"{_OK}{_BOLD}100%{_RST}"
-            print(f"  {label}  {_colored_bar(100)}  {t(f'剩余 {full_str}  {_DIM}(推断：CLI 无新记录，可能漏检 Cloud){_RST}', f'left {full_str}  {_DIM}(inferred: no new CLI usage; Cloud may be missed){_RST}')}")
-            print(f"  {_DIM}{t('重置时间', 'Reset at')}: {fmt_reset_dt(reset)}{_RST}")
+            print(f"  {label}  {_colored_bar(100)}  {t(f'剩余 {full_str}  {_DIM}(推断：CLI 无新记录，可能漏检 Cloud){_RST}', f'剩餘 {full_str}  {_DIM}(推斷：CLI 無新記錄，可能漏檢 Cloud){_RST}', f'left {full_str}  {_DIM}(inferred: no new CLI usage; Cloud may be missed){_RST}')}")
+            print(f"  {_DIM}{t('重置时间', '重置時間', 'Reset at')}: {fmt_reset_dt(reset)}{_RST}")
         elif reset:
-            print(f"  {label}  {_DIM}{t(f'快照已过期，预计 {fmt_reset_dt(reset)} 后恢复', f'snapshot expired, expected reset at {fmt_reset_dt(reset)}')}{_RST}")
+            print(f"  {label}  {_DIM}{t(f'快照已过期，预计 {fmt_reset_dt(reset)} 后恢复', f'快照已過期，預計 {fmt_reset_dt(reset)} 後恢復', f'snapshot expired, expected reset at {fmt_reset_dt(reset)}')}{_RST}")
         else:
             age_h = data_age_min / 60
-            print(f"  {label}  {_DIM}{t(f'快照已过期 ({age_h:.0f}h 前)', f'snapshot expired ({age_h:.0f}h ago)')}{_RST}  →  {CODEX_USAGE_URL}")
+            print(f"  {label}  {_DIM}{t(f'快照已过期 ({age_h:.0f}h 前)', f'快照已過期 ({age_h:.0f}h 前)', f'snapshot expired ({age_h:.0f}h ago)')}{_RST}  →  {CODEX_USAGE_URL}")
     else:
         r_str = f"{_bc(remaining)}{_BOLD}{remaining:.0f}%{_RST}"
-        print(f"  {label}  {_colored_bar(remaining)}  {t(f'剩余 {r_str}  {_DIM}(已用 {pct:.0f}%){_RST}', f'left {r_str}  {_DIM}(used {pct:.0f}%){_RST}')}")
+        print(f"  {label}  {_colored_bar(remaining)}  {t(f'剩余 {r_str}  {_DIM}(已用 {pct:.0f}%){_RST}', f'剩餘 {r_str}  {_DIM}(已用 {pct:.0f}%){_RST}', f'left {r_str}  {_DIM}(used {pct:.0f}%){_RST}')}")
         if reset:
-            print(f"  {_DIM}{t('重置时间', 'Resets at')}: {fmt_reset_dt(reset)}{_RST}")
+            print(f"  {_DIM}{t('重置时间', '重置時間', 'Resets at')}: {fmt_reset_dt(reset)}{_RST}")
     return stale
 
 
@@ -1405,33 +1514,34 @@ def render_codex(since: datetime.datetime):
     ts, rl, source, fallback_reason = current_codex_rate_limits()
     if not rl:
         if source == "no_access":
-            print(f"  {_WARN}{t('未检测到 Codex 权限', 'No Codex access detected')}{_RST}")
+            print(f"  {_WARN}{t('未检测到 Codex 权限', '未偵測到 Codex 權限', 'No Codex access detected')}{_RST}")
             print(f"  {_DIM}{fallback_reason}{_RST}")
         else:
             if fallback_reason:
-                print(f"  {t('实时读取失败', 'Live fetch failed')}: {fmt_error(fallback_reason)}")
-            print(t("  （未找到 CodeX 数据）", "  (no CodeX data found)"))
+                print(f"  {t('实时读取失败', '實時讀取失敗', 'Live fetch failed')}: {fmt_error(fallback_reason)}")
+            print(t("  （未找到 CodeX 数据）", "  （未找到 CodeX 資料）", "  (no CodeX data found)"))
         return
 
     now_local = datetime.datetime.now(TZ_LOCAL)
     ts_local = ts.astimezone(TZ_LOCAL)
 
     source_labels = {
-        "live": t("实时", "live"),
-        "web": t("实时(网页)", "live (web)"),
-        "snapshot": t("本地快照", "snapshot"),
+        "live": t("实时", "實時", "live"),
+        "web": t("实时(网页)", "實時(網頁)", "live (web)"),
+        "snapshot": t("本地快照", "本地快照", "snapshot"),
     }
     source_details = {
         "live": "codex app-server WebSocket",
-        "web": t("chatgpt.com usage API  (浏览器登录态)", "chatgpt.com usage API  (browser session)"),
-        "snapshot": t("本地快照", "local snapshot") + " (~/.codex/sessions/)",
+        "web": t("chatgpt.com usage API  (浏览器登录态)", "chatgpt.com usage API  (瀏覽器登入狀態)",
+                 "chatgpt.com usage API  (browser session)"),
+        "snapshot": t("本地快照", "本地快照", "local snapshot") + " (~/.codex/sessions/)",
     }
-    print(f"  {_DIM}{t('数据时间', 'Data time')}: {fmt_dt(ts_local)}  ({source_labels[source]}){_RST}")
-    print(f"  {_DIM}{t('数据来源', 'Source')}: {source_details[source]}{_RST}")
+    print(f"  {_DIM}{t('数据时间', '資料時間', 'Data time')}: {fmt_dt(ts_local)}  ({source_labels[source]}){_RST}")
+    print(f"  {_DIM}{t('数据来源', '資料來源', 'Source')}: {source_details[source]}{_RST}")
     if fallback_reason and source == "snapshot":
-        print(f"  {t('实时读取失败', 'Live fetch failed')}: {fmt_error(fallback_reason)}")
+        print(f"  {t('实时读取失败', '實時讀取失敗', 'Live fetch failed')}: {fmt_error(fallback_reason)}")
     plan = rl.get("plan_type") or "?"
-    print(f"  {t('套餐', 'Plan')}: {_BOLD}{fmt_plan(plan)}{_RST}")
+    print(f"  {t('套餐', '套餐', 'Plan')}: {_BOLD}{fmt_plan(plan)}{_RST}")
     print()
 
     data_age_min = (now_local - ts_local).total_seconds() / 60
@@ -1440,19 +1550,21 @@ def render_codex(since: datetime.datetime):
     # 两档都固定打印，缺数据显示 "?"（见 _classify_codex_windows 的 why）。
     short_win, long_win = _classify_codex_windows(rl)
 
-    short_label = _rolling_window_label(short_win["window_minutes"]) if short_win else t("5小时滚动窗", "5-hour window")
+    short_label = _rolling_window_label(short_win["window_minutes"]) if short_win else t("5小时滚动窗", "5小時滾動窗", "5-hour window")
     _print_codex_window_row(
         short_label, short_win,
         source=source, data_age_min=data_age_min, now_local=now_local,
-        missing_note=t("OpenAI 当前临时移除该档限额，预计后续恢复", "OpenAI has temporarily removed this tier, expected to return"),
+        missing_note=t("OpenAI 当前临时移除该档限额，预计后续恢复",
+                       "OpenAI 目前暫時移除該檔限額，預計後續恢復",
+                       "OpenAI has temporarily removed this tier, expected to return"),
     )
     print()
 
-    long_label = _rolling_window_label(long_win["window_minutes"]) if long_win else t("7天滚动窗  ", "7-day window ")
+    long_label = _rolling_window_label(long_win["window_minutes"]) if long_win else t("7天滚动窗  ", "7天滾動窗  ", "7-day window ")
     _print_codex_window_row(
         long_label, long_win,
         source=source, data_age_min=data_age_min, now_local=now_local,
-        missing_note=t("本次未返回该档数据", "not returned this time"),
+        missing_note=t("本次未返回该档数据", "本次未返回該檔資料", "not returned this time"),
     )
     w_pct = long_win.get("used_percent", 0) if long_win else None
     w_reset = epoch_to_local(long_win["resets_at"]) if long_win and long_win.get("resets_at") else None
@@ -1469,7 +1581,7 @@ def render_codex(since: datetime.datetime):
             rate_per_hour = w_pct / (elapsed_since_reset.total_seconds() / 3600)
             if rate_per_hour > 0:
                 hours_left = remaining_pct / rate_per_hour
-                print(f"\n  📊 {_DIM}{t(f'按当前速率 ({rate_per_hour:.1f}%/小时)，剩余 {remaining_pct:.0f}% 约可用', f'At current rate ({rate_per_hour:.1f}%/hr), {remaining_pct:.0f}% left ≈')}{_RST} {_BOLD}{hours_left:.0f} {t('小时', 'hrs')}{_RST}")
+                print(f"\n  📊 {_DIM}{t(f'按当前速率 ({rate_per_hour:.1f}%/小时)，剩余 {remaining_pct:.0f}% 约可用', f'按目前速率 ({rate_per_hour:.1f}%/小時)，剩餘 {remaining_pct:.0f}% 約可用', f'At current rate ({rate_per_hour:.1f}%/hr), {remaining_pct:.0f}% left ≈')}{_RST} {_BOLD}{hours_left:.0f} {t('小时', '小時', 'hrs')}{_RST}")
 
 
 def render_summary():
@@ -1524,15 +1636,16 @@ def render_menubar_history(minutes: int = 120):
     except FileNotFoundError:
         print(t(
             f"未找到菜单栏历史：{_MENUBAR_HISTORY_PATH}",
+            f"未找到選單列歷史記錄：{_MENUBAR_HISTORY_PATH}",
             f"Menubar history not found: {_MENUBAR_HISTORY_PATH}",
         ))
         return
 
     if not rows:
-        print(t("最近没有菜单栏历史采样。", "No recent menubar history samples."))
+        print(t("最近没有菜单栏历史采样。", "最近沒有選單列歷史記錄。", "No recent menubar history samples."))
         return
 
-    print(f"\n{_BOLD}{t('菜单栏历史采样', 'Menubar history')}{_RST}")
+    print(f"\n{_BOLD}{t('菜单栏历史采样', '選單列歷史記錄', 'Menubar history')}{_RST}")
     print(f"{_DIM}{_MENUBAR_HISTORY_PATH}{_RST}")
     print()
     for rec in rows:
@@ -1551,16 +1664,18 @@ def render_menubar_history(minutes: int = 120):
 
 def main():
     parser = argparse.ArgumentParser(
-        description=t("查看 Claude / CodeX 本周消耗", "Show Claude / CodeX token usage and quota"),
+        description=t("查看 Claude / CodeX 本周消耗", "查看 Claude / CodeX 本週消耗",
+                       "Show Claude / CodeX token usage and quota"),
     )
     parser.add_argument("--days", type=int, default=7,
-                        help=t("统计最近 N 天（默认 7）", "show last N days (default: 7)"))
+                        help=t("统计最近 N 天（默认 7）", "統計最近 N 天（預設 7）", "show last N days (default: 7)"))
     parser.add_argument("--all", action="store_true",
-                        help=t("统计全部历史（忽略 --days）", "show all history (overrides --days)"))
+                        help=t("统计全部历史（忽略 --days）", "統計全部歷史（忽略 --days）", "show all history (overrides --days)"))
     parser.add_argument("--detail", action="store_true",
-                        help=t("展示每个模型的详细 token 统计", "show per-model token breakdown"))
+                        help=t("展示每个模型的详细 token 统计", "展示每個模型的詳細 token 統計", "show per-model token breakdown"))
     parser.add_argument("--history", action="store_true",
-                        help=t("展示菜单栏最近 2 小时额度采样", "show menubar quota samples from the last 2 hours"))
+                        help=t("展示菜单栏最近 2 小时额度采样", "展示選單列最近 2 小時額度記錄",
+                               "show menubar quota samples from the last 2 hours"))
     args = parser.parse_args()
 
     if args.history:
@@ -1577,10 +1692,16 @@ def main():
         days_count = args.days
 
     now_local = datetime.datetime.now(TZ_LOCAL)
-    _wd_zh = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"]
+    _wd_zh_hans = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"]
+    _wd_zh_hant = ["週一", "週二", "週三", "週四", "週五", "週六", "週日"]
     _wd_en = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
-    wd_now = _wd_zh[now_local.weekday()] if LANG == "zh" else _wd_en[now_local.weekday()]
-    print(f"\n{_DIM}{t('查询时间', 'Queried at')}: {wd_now} {now_local.strftime('%m-%d %H:%M')} {fmt_timezone(now_local)}{_RST}")
+    if LANG == "en":
+        wd_now = _wd_en[now_local.weekday()]
+    elif LANG == "zh-Hant":
+        wd_now = _wd_zh_hant[now_local.weekday()]
+    else:
+        wd_now = _wd_zh_hans[now_local.weekday()]
+    print(f"\n{_DIM}{t('查询时间', '查詢時間', 'Queried at')}: {wd_now} {now_local.strftime('%m-%d %H:%M')} {fmt_timezone(now_local)}{_RST}")
 
     claude_totals = collect_claude(since)
 

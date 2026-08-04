@@ -138,6 +138,16 @@ ai-limit only reads your existing local Claude / ChatGPT browser session and loc
 
 ### Installation
 
+**Windows: one-line install (PowerShell)**
+
+```powershell
+irm https://raw.githubusercontent.com/zhuchenxi113/ai-limit/main/install.ps1 | iex
+```
+
+This downloads a standalone `ai-limit.exe` (no Python required) and adds it to your user `PATH`. Open a new PowerShell (or Windows Terminal / WSL2) window afterward and run `ai-limit`. It only writes to your per-user `PATH`, no administrator rights needed. This is separate from the Windows Tray App installer above — installing one does not install the other.
+
+**macOS / manual install (any platform): clone and run from source**
+
 **1. Clone the repo**
 
 ```bash
