@@ -22,7 +22,7 @@ sys.path.insert(0, str(_HERE))
 sys.path.insert(0, str(_REPO))
 
 from PySide6.QtCore import QPoint, QTimer
-from PySide6.QtGui import QAction, QActionGroup, QFont
+from PySide6.QtGui import QAction, QActionGroup, QFont, QGuiApplication
 from PySide6.QtWidgets import QApplication, QMenu, QSystemTrayIcon
 
 from usage import (
@@ -115,7 +115,8 @@ class AiLimitTray:
         self._claude_icon.setContextMenu(self._menu)
         self._codex_icon.setContextMenu(self._menu)
 
-        self._panel = UsagePanel(self, is_dark_taskbar())
+        self._last_dark_taskbar = is_dark_taskbar()
+        self._panel = UsagePanel(self, self._last_dark_taskbar)
         self._menu.aboutToHide.connect(self._settings_menu_closed)
         self._claude_icon.activated.connect(
             lambda reason: self._toggle_panel(self._claude_icon, reason)
@@ -124,9 +125,17 @@ class AiLimitTray:
             lambda reason: self._toggle_panel(self._codex_icon, reason)
         )
 
+        self._connect_color_scheme_change()
+
         self._apply_timer = QTimer()
         self._apply_timer.timeout.connect(self._apply_pending)
         self._apply_timer.start(400)
+
+        # Qt 的应用配色通知不等同于 Windows 任务栏配色通知，也可能与 Explorer
+        # 重画存在时序差。低频核对真实任务栏设置，只在值变化时重画图标。
+        self._theme_timer = QTimer()
+        self._theme_timer.timeout.connect(self._sync_taskbar_theme)
+        self._theme_timer.start(1000)
 
         self._auto_timer = QTimer()
         self._auto_timer.timeout.connect(self._kick_background_fetch)
@@ -680,10 +689,41 @@ class AiLimitTray:
 
     # ── 渲染 ──────────────────────────────────────────────────────────────
 
+    def _connect_color_scheme_change(self):
+        """应用配色变化后安排一次任务栏主题复核。
+
+        Codex 图标前景色随任务栏深浅切换，Claude 固定橙色不受影响。Qt 官方
+        文档说明 colorSchemeChanged 发出时旧 palette 仍然有效，所以不在信号
+        回调里同步重画；稍后复核 Windows 任务栏设置。独立定时器还会覆盖
+        “只切换系统/任务栏模式、应用模式不变”而没有 Qt 信号的情况。
+
+        2026-08-03 试过在主题切换时改用 Shell_NotifyIcon 的"先 NIM_DELETE
+        再 NIM_ADD"强制 Explorer 重建图标，想消除切换瞬间的一下残留花屏，
+        但真机反复验证（含重启 explorer.exe 排除测试环境被前面高频强杀
+        进程污染的可能）证明这样反而更容易卡在花屏状态、不会自愈，比
+        普通更新更差，已放弃，不要重新引入。这里只用普通重画，残留的一下
+        切换瞬间闪烁视为可接受的代价（怀疑是 Windows 自身主题切换时重绘
+        整个任务栏的过渡动画，不是这个 App 能控制的）。
+        """
+        try:
+            QGuiApplication.styleHints().colorSchemeChanged.connect(
+                lambda *_: QTimer.singleShot(250, self._sync_taskbar_theme)
+            )
+        except Exception:
+            pass
+
+    def _sync_taskbar_theme(self):
+        dark = is_dark_taskbar()
+        if dark == self._last_dark_taskbar:
+            return
+        self._last_dark_taskbar = dark
+        self._render()
+
     def _render(self):
         lang = self._lang()
         mode = self._state.get("global", "5h")
         dark = is_dark_taskbar()
+        self._last_dark_taskbar = dark
         claude = self._claude or {}
         codex = self._codex or {}
         claude_status = fetchers.status_info(

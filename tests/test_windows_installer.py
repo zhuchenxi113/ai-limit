@@ -66,3 +66,7 @@ def test_installer_version_matches_application_version() -> None:
     assert installer_match is not None
     assert usage_match is not None
     assert installer_match.group(1) == usage_match.group(1)
+
+
+def test_installer_uses_platform_qualified_release_name() -> None:
+    assert "OutputBaseFilename=ai-limit-windows-{#AppVersion}-setup" in _script()

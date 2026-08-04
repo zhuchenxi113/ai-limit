@@ -51,29 +51,39 @@ class WindowsUpdaterTests(unittest.TestCase):
                     installer,
                     installer.with_name(installer.name + ".sig"),
                     expected,
-                    f"ai-limit-{expected}-setup.exe",
+                    f"ai-limit-windows-{expected}-setup.exe",
                 )
 
-    def test_release_asset_must_match_declared_version_exactly(self):
+    def test_release_asset_prefers_platform_name_and_exact_version(self):
         assets = [
-            {"name": "ai-limit-0.3.22-setup.exe", "browser_download_url": "old"},
-            {"name": "ai-limit-0.3.23-setup.exe", "browser_download_url": "new"},
+            {"name": "ai-limit-0.3.23-setup.exe", "browser_download_url": "legacy"},
+            {"name": "ai-limit-windows-0.3.22-setup.exe", "browser_download_url": "old"},
+            {"name": "ai-limit-windows-0.3.23-setup.exe", "browser_download_url": "new"},
         ]
         self.assertEqual(
             updater_win._pick_setup_asset(assets, "0.3.23"),
-            ("new", "ai-limit-0.3.23-setup.exe"),
+            ("new", "ai-limit-windows-0.3.23-setup.exe"),
+        )
+
+    def test_release_asset_falls_back_to_legacy_name_for_transition(self):
+        assets = [
+            {"name": "ai-limit-0.3.23-setup.exe", "browser_download_url": "legacy"},
+        ]
+        self.assertEqual(
+            updater_win._pick_setup_asset(assets, "0.3.23"),
+            ("legacy", "ai-limit-0.3.23-setup.exe"),
         )
 
     def test_release_signature_must_match_exact_installer_name(self):
         assets = [
-            {"name": "ai-limit-0.3.22-setup.exe.sig", "browser_download_url": "old"},
-            {"name": "ai-limit-0.3.23-setup.exe.sig", "browser_download_url": "new"},
+            {"name": "ai-limit-windows-0.3.22-setup.exe.sig", "browser_download_url": "old"},
+            {"name": "ai-limit-windows-0.3.23-setup.exe.sig", "browser_download_url": "new"},
         ]
         self.assertEqual(
             updater_win._pick_signature_asset(
-                assets, "ai-limit-0.3.23-setup.exe"
+                assets, "ai-limit-windows-0.3.23-setup.exe"
             ),
-            ("new", "ai-limit-0.3.23-setup.exe.sig"),
+            ("new", "ai-limit-windows-0.3.23-setup.exe.sig"),
         )
 
     def test_plain_http_or_unrelated_download_host_is_rejected(self):

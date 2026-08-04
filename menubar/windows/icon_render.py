@@ -39,7 +39,7 @@ logical=20 实际要的是 25px 的图，logical=24 要的是 30px——25、30 
 设计原则依然成立，也是这个函数没有再踩同一个坑的原因。
 """
 from PySide6.QtCore import Qt, QRectF
-from PySide6.QtGui import QColor, QFont, QPainter, QPixmap
+from PySide6.QtGui import QColor, QFont, QGuiApplication, QPainter, QPixmap
 
 _COLOR_CLAUDE = QColor("#d97757")
 _COLOR_CODEX_DARK = QColor("#f2f2f2")
@@ -53,8 +53,28 @@ def _service_color(service: str, dark_mode: bool) -> QColor:
     return QColor(_COLOR_CODEX_DARK if dark_mode else _COLOR_CODEX_LIGHT)
 
 
+def _outside_text_color(service: str, dark_mode: bool, fg: QColor) -> QColor:
+    """透明区域上的数字沿用服务身份色。"""
+    return QColor(fg)
+
+
+def _service_font_weight(service: str, dark_mode: bool) -> QFont.Weight:
+    """托盘数字统一使用粗体，保证小尺寸下的笔画清晰度。"""
+    return QFont.Weight.Bold
+
+
+def _filled_text_color(service: str, fill_color: QColor,
+                       outside_text: QColor) -> QColor:
+    """填充区域上的数字使用与填充色有区分的颜色。"""
+    if service == "claude":
+        return QColor("#f5f5f5")
+    return (QColor("#202020") if fill_color.lightnessF() >= 0.55
+            else QColor("#f5f5f5"))
+
+
 def _paint_battery(painter: QPainter, size: int, pct, err: bool,
-                   fg: QColor, error_fill: QColor):
+                   fg: QColor, error_fill: QColor, outside_text: QColor,
+                   service: str, font_weight: QFont.Weight):
     """在 [0,0,size,size] 画布上，按这个 size 的原生比例画电池条+数字。
     所有尺寸都是 size 的比例，不是固定像素值，保证不同 size 调用画出来的
     是同一个设计在不同分辨率下的原生渲染，不是互相缩放的结果。
@@ -108,9 +128,9 @@ def _paint_battery(painter: QPainter, size: int, pct, err: bool,
         painter.setBrush(fill_color)
         painter.drawRoundedRect(fill_rect, size * 0.045, size * 0.045)
 
-    painter.setPen(fg)
+    painter.setPen(outside_text)
     label = "!" if err else ("?" if pct is None else str(pct))
-    font = QFont("Segoe UI", weight=QFont.Weight.Bold)
+    font = QFont("Segoe UI", weight=font_weight)
     # 两位数优先保证一眼可读；100 单独缩小以容纳三位。
     font.setPixelSize(max(7, round(size * (0.52 if len(label) <= 2 else 0.38))))
     painter.setFont(font)
@@ -118,10 +138,9 @@ def _paint_battery(painter: QPainter, size: int, pct, err: bool,
                        rect.width(), rect.height())
 
     if fill_rect is not None and fill_rect.width() > 0:
-        # 同一组数字分区绘制：落在色块上的部分用反差色，空白区用服务色。
-        # 这样填充边缘穿过数字时也不会丢失笔画。
-        inside_text = (QColor("#202020") if fill_color.lightnessF() >= 0.55
-                       else QColor("#f5f5f5"))
+        # 同一组数字分区绘制，保证填充边缘穿过数字时也不会丢失笔画。
+        # Claude 使用浅色/橙色分区；Codex 按填充/透明区反差着色。
+        inside_text = _filled_text_color(service, fill_color, outside_text)
         painter.save()
         painter.setClipRect(fill_rect)
         painter.setPen(inside_text)
@@ -132,7 +151,7 @@ def _paint_battery(painter: QPainter, size: int, pct, err: bool,
         painter.setClipRect(QRectF(fill_rect.right(), rect.top(),
                                    max(0.0, rect.right() - fill_rect.right()),
                                    rect.height()))
-        painter.setPen(fg)
+        painter.setPen(outside_text)
         painter.drawText(text_rect, Qt.AlignmentFlag.AlignCenter, label)
         painter.restore()
     else:
@@ -147,6 +166,8 @@ def render_service_pixmap(pct: int | None, err: bool, dark_mode: bool,
     目标物理像素边长，这里只按这一个尺寸原生作画，不做任何缩放/插值。
     """
     fg = _service_color(service, dark_mode)
+    outside_text = _outside_text_color(service, dark_mode, fg)
+    font_weight = _service_font_weight(service, dark_mode)
     # Claude 的告警使用黄色；Codex 无论正常还是异常都保持任务栏适配的
     # 黑/白身份色，避免两个服务的错误图标看起来完全一样。
     error_fill = QColor(_COLOR_ERR if service == "claude" else fg)
@@ -154,7 +175,10 @@ def render_service_pixmap(pct: int | None, err: bool, dark_mode: bool,
     px.fill(Qt.GlobalColor.transparent)
     painter = QPainter(px)
     painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-    _paint_battery(painter, size, pct, err, fg, error_fill)
+    _paint_battery(
+        painter, size, pct, err, fg, error_fill, outside_text, service,
+        font_weight
+    )
     painter.end()
     return px
 
@@ -174,16 +198,8 @@ def render_placeholder_pixmap(size: int) -> QPixmap:
     return px
 
 
-def is_dark_taskbar() -> bool:
-    """深色/浅色任务栏判断：优先 Qt 6.5+ colorScheme API，失败退回注册表。"""
-    try:
-        from PySide6.QtGui import QGuiApplication
-        scheme = QGuiApplication.styleHints().colorScheme()
-        if scheme is not None:
-            from PySide6.QtCore import Qt as _Qt
-            return scheme == _Qt.ColorScheme.Dark
-    except Exception:
-        pass
+def _windows_taskbar_dark_mode() -> bool | None:
+    """读取 Windows 任务栏自身的深浅色设置；不可用时返回 ``None``。"""
     try:
         import winreg
         with winreg.OpenKey(
@@ -193,4 +209,25 @@ def is_dark_taskbar() -> bool:
             value, _ = winreg.QueryValueEx(key, "SystemUsesLightTheme")
             return value == 0
     except Exception:
-        return False
+        return None
+
+
+def is_dark_taskbar() -> bool:
+    """判断任务栏深浅色；Windows 任务栏设置优先，Qt 应用配色仅作兜底。
+
+    Qt 的 ``QStyleHints.colorScheme`` 描述的是应用使用的配色方案，不是任务栏
+    本身。Windows 允许应用模式和系统/任务栏模式分别设置；若优先读取 Qt，
+    Codex 图标可能在浅色任务栏上仍按深色模式画成白色。Claude 使用固定橙色，
+    因此这个错误只会明显影响 Codex。
+    """
+    taskbar_dark = _windows_taskbar_dark_mode()
+    if taskbar_dark is not None:
+        return taskbar_dark
+    try:
+        scheme = QGuiApplication.styleHints().colorScheme()
+        if scheme is not None:
+            from PySide6.QtCore import Qt as _Qt
+            return scheme == _Qt.ColorScheme.Dark
+    except Exception:
+        pass
+    return False

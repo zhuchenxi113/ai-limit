@@ -75,11 +75,13 @@ Windows 版用两个紧凑的任务栏托盘图标分别显示 Claude Code 和 C
   </tr>
 </table>
 
-托盘图标：<img src="docs/screenshot-windows-tray-icons-v0324.png" width="90" alt="Claude 与 CodeX Windows 托盘图标" />
+托盘图标：<img src="docs/screenshot-windows-tray-icons-v0326.png" width="90" alt="Claude 与 CodeX Windows 托盘图标" />
+
+Windows 切换深色/浅色模式后，图标会立即按新任务栏主题重绘；Explorer 重建通知区域后，图标也会自动恢复。Claude 数字根据橙色额度填充分成浅白/橙色两区，CodeX 数字根据黑白填充分成黑/白两区，保证小尺寸下仍有清晰反差。
 
 **安装**
 
-从最新的 [GitHub Release](https://github.com/zhuchenxi113/ai-limit/releases/latest) 或 [Gitee Release](https://gitee.com/zhuchenxi113/ai-limit/releases) 下载 `ai-limit-<版本>-setup.exe`。安装程序使用当前用户范围的可见安装向导，不需要管理员权限。
+从最新的 [GitHub Release](https://github.com/zhuchenxi113/ai-limit/releases/latest) 或 [Gitee Release](https://gitee.com/zhuchenxi113/ai-limit/releases) 下载 `ai-limit-windows-<版本>-setup.exe`。安装程序使用当前用户范围的可见安装向导，不需要管理员权限。
 
 > 当前 Windows 版本尚无 Authenticode 代码签名证书，Windows 可能显示“未知发布者”或 SmartScreen 警告。未签名版本出现该提示属于预期现象；如果文件名或下载来源不符合预期，请勿继续安装。
 

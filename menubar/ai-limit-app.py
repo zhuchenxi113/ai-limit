@@ -127,8 +127,9 @@ _GITEE_RELEASES_PAGE_URL = "https://gitee.com/zhuchenxi113/ai-limit/releases"
 # 一键更新：只测试用，指向本地 file:// JSON，覆盖 GitHub/Gitee 两个真实源，
 # 用于 Stage 3 端到端联调（不依赖真实公开 Release）。生产环境不设置这个变量。
 _RELEASE_FEED_OVERRIDE = os.environ.get("AI_LIMIT_RELEASE_FEED_OVERRIDE")
-# Release 资产文件名约定：ai-limit-<version>.dmg（RUNBOOK.md 有明确要求不能改）。
-# Gitee releases 接口会混入自动生成的 v<version>.zip/.tar.gz 源码包，必须按文件名过滤。
+# v0.3.26 起正式资产名为 ai-limit-macos-<version>.dmg。正则保留较宽的
+# ai-limit-*.dmg 兼容范围，使旧 Release 仍可用于测试和手动回退。
+# Gitee 会混入自动生成的源码包，必须按 .dmg 文件名过滤。
 _DMG_ASSET_RE = re.compile(r"^ai-limit-.*\.dmg$")
 _UPDATE_FAILED_MARKER = pathlib.Path.home() / ".ai-limit-update-failed.json"
 _UPDATER_SCRIPT_NAME = "ai-limit-updater.sh"
@@ -197,7 +198,7 @@ def _show_alert(title, message, ok, cancel=None) -> bool:
     return alert.runModal() == AppKit.NSAlertFirstButtonReturn
 
 def _pick_dmg_asset(assets):
-    """从 Release assets[] 里挑出 ai-limit-<version>.dmg。Gitee 会混入自动生成的
+    """从 Release assets[] 里挑出 ai-limit-*.dmg。Gitee 会混入自动生成的
     源码包（v0.3.19.zip/.tar.gz），必须按文件名过滤，不能直接取 assets[0]。
     找不到返回 (None, None)（防御性：某次发版忘了传 DMG 资产）。"""
     for a in assets or []:

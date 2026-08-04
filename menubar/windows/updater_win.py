@@ -28,10 +28,10 @@ _GITEE_RELEASES_PAGE_URL = "https://gitee.com/zhuchenxi113/ai-limit/releases"
 # 同一个环境变量名/同一套用法，方便端到端联调不依赖真实公开 Release。
 _RELEASE_FEED_OVERRIDE = os.environ.get("AI_LIMIT_RELEASE_FEED_OVERRIDE")
 
-# Windows 安装包资产命名：ai-limit-<version>-setup.exe（对应 installer.iss 的
-# OutputBaseFilename）。比单纯 `.exe` 通配更精确，避免误匹配 Release 里其他
-# 辅助文件；也不用 `.msi`——Inno Setup 产出的是 .exe 安装器不是 MSI。
-_SETUP_ASSET_RE = re.compile(r"^ai-limit-.*-setup\.exe$")
+# v0.3.26 起正式 Windows 资产带平台名。旧名必须继续作为兼容资产发布，
+# 因为 v0.3.25 更新器会精确查找 ai-limit-<version>-setup.exe。
+_SETUP_ASSET_RE = re.compile(r"^ai-limit-windows-.*-setup\.exe$")
+_LEGACY_SETUP_ASSET_RE = re.compile(r"^ai-limit-.*-setup\.exe$")
 
 _UPDATE_PENDING_MARKER = pathlib.Path.home() / ".ai-limit-update-pending.json"
 _MAX_DOWNLOAD_BYTES = 500 * 1024 * 1024
@@ -54,12 +54,23 @@ def _version_tuple(v: str):
 
 
 def _pick_setup_asset(assets, expected_version=None):
-    expected_name = (f"ai-limit-{expected_version}-setup.exe"
-                     if expected_version else None)
-    for a in assets or []:
-        name = a.get("name", "")
-        if _SETUP_ASSET_RE.match(name) and (expected_name is None or name == expected_name):
-            return a.get("browser_download_url"), name
+    if expected_version:
+        expected_names = (
+            f"ai-limit-windows-{expected_version}-setup.exe",
+            f"ai-limit-{expected_version}-setup.exe",
+        )
+        for expected_name in expected_names:
+            for asset in assets or []:
+                if asset.get("name") == expected_name:
+                    return asset.get("browser_download_url"), expected_name
+        return None, None
+
+    # 没有版本约束时也优先正式平台名，再回退旧名。
+    for pattern in (_SETUP_ASSET_RE, _LEGACY_SETUP_ASSET_RE):
+        for asset in assets or []:
+            name = asset.get("name", "")
+            if pattern.match(name):
+                return asset.get("browser_download_url"), name
     return None, None
 
 

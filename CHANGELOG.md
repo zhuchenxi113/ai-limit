@@ -2,6 +2,23 @@
 
 All notable user-facing changes to AI Limit are documented here.
 
+## 0.3.26 - 2026-08-03
+
+### Changed
+
+- Windows Release assets and macOS disk images now include the platform name in their filenames.
+- Windows Claude quota digits now use a bold white/orange split, while Codex keeps its bold black/white split, preserving contrast across filled and transparent regions.
+- Updated the README tray-icon screenshot and appearance notes to match the current Windows design.
+
+### Fixed
+
+- Windows tray icons now redraw immediately after the system taskbar switches between light and dark modes instead of retaining stale colors.
+- Windows tray icons now return after Explorer rebuilds the notification area, including installations whose executable path changed during upgrade or QA.
+
+### Upgrade compatibility
+
+- Releases retain an independently signed legacy-name Windows installer copy so the updater shipped in v0.3.25 can still discover and verify newer versions. Manual downloads should use the `ai-limit-windows-<version>-setup.exe` asset.
+
 ## 0.3.25 - 2026-08-02
 
 ### Added

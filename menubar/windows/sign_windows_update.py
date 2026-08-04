@@ -49,7 +49,9 @@ def main():
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8")
     parser = argparse.ArgumentParser()
-    parser.add_argument("installer", help="ai-limit-<version>-setup.exe")
+    parser.add_argument(
+        "installer", help="ai-limit-windows-<version>-setup.exe（或旧版兼容副本）"
+    )
     parser.add_argument("--key", default=str(DEFAULT_KEY_PATH))
     args = parser.parse_args()
     signature_path, document = sign_installer(args.installer, args.key)

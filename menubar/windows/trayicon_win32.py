@@ -56,9 +56,6 @@ LCS_GM_IMAGES = 4
 
 SM_CXSMICON = 49
 
-HWND_MESSAGE = -3
-
-
 class GUID(ctypes.Structure):
     _fields_ = [
         ("Data1", wintypes.DWORD),
@@ -206,6 +203,10 @@ shell32.Shell_NotifyIconGetRect.restype = ctypes.c_long
 kernel32.GetModuleHandleW.argtypes = [wintypes.LPCWSTR]
 kernel32.GetModuleHandleW.restype = wintypes.HMODULE
 
+# Must remain a real top-level window. HWND_MESSAGE windows do not receive the
+# TaskbarCreated broadcast when Explorer rebuilds the notification area.
+_TRAY_HOST_PARENT = None
+
 
 def icon_pixel_size() -> int:
     """当前系统托盘小图标应该渲染的物理像素边长（随 DPI 变化）。"""
@@ -330,7 +331,12 @@ class _MenuBoundaryFilter(QObject):
 
 
 class _TrayHost:
-    """进程内单例：一个消息专用隐藏窗口，承载所有 Win32TrayIcon 的回调消息。"""
+    """进程内单例：一个不可见顶层窗口，承载所有 Win32TrayIcon 的回调消息。
+
+    这里不能使用 ``HWND_MESSAGE``。仅消息窗口收不到 Explorer 重建托盘时广播的
+    ``TaskbarCreated``，会让进程继续运行但两个图标一起永久消失。style=0 且从不
+    ShowWindow 的普通顶层窗口不会出现在屏幕或任务栏，同时可以收到该广播。
+    """
 
     _instance = None
 
@@ -341,7 +347,7 @@ class _TrayHost:
         # 必须在创建窗口之前就赋好值，否则回调里第一次访问这个属性会 AttributeError。
         self._taskbar_created_msg = user32.RegisterWindowMessageW("TaskbarCreated")
         self._wndproc = WNDPROC(self._wndproc_impl)
-        class_name = "AiLimitTrayHostWndClass"
+        self._class_name = "AiLimitTrayHostWndClass"
         self._hinstance = kernel32.GetModuleHandleW(None)
         wc = WNDCLASSW()
         wc.style = 0
@@ -353,13 +359,15 @@ class _TrayHost:
         wc.hCursor = None
         wc.hbrBackground = None
         wc.lpszMenuName = None
-        wc.lpszClassName = class_name
+        wc.lpszClassName = self._class_name
         user32.RegisterClassW(ctypes.byref(wc))
         self.hwnd = user32.CreateWindowExW(
-            0, class_name, "AiLimitTrayHost", 0,
+            0, self._class_name, "AiLimitTrayHost", 0,
             0, 0, 0, 0,
-            wintypes.HWND(HWND_MESSAGE), None, self._hinstance, None,
+            _TRAY_HOST_PARENT, None, self._hinstance, None,
         )
+        if not self.hwnd:
+            raise ctypes.WinError()
 
     @classmethod
     def instance(cls) -> "_TrayHost":
@@ -404,6 +412,8 @@ class Win32TrayIcon(QObject):
         self._visible = False
         self._added = False
         self._hicon = None
+        self._retry_scheduled = False
+        self._use_guid = True
 
     def setIcon(self, pixmap: QPixmap) -> None:
         self._pixmap = pixmap
@@ -448,7 +458,8 @@ class Win32TrayIcon(QObject):
         identifier.cbSize = ctypes.sizeof(identifier)
         identifier.hWnd = self._host.hwnd
         identifier.uID = self._uid
-        identifier.guidItem = self._guid
+        if self._use_guid:
+            identifier.guidItem = self._guid
         rect = wintypes.RECT()
         if shell32.Shell_NotifyIconGetRect(ctypes.byref(identifier), ctypes.byref(rect)) != 0:
             return False
@@ -464,7 +475,9 @@ class Win32TrayIcon(QObject):
         nid.cbSize = ctypes.sizeof(NOTIFYICONDATAW)
         nid.hWnd = self._host.hwnd
         nid.uID = self._uid
-        nid.uFlags = NIF_MESSAGE | NIF_TIP | NIF_GUID | NIF_SHOWTIP
+        nid.uFlags = NIF_MESSAGE | NIF_TIP | NIF_SHOWTIP
+        if self._use_guid:
+            nid.uFlags |= NIF_GUID
         nid.uCallbackMessage = _WM_TRAYICON
         nid.guidItem = self._guid
         nid.szTip = self._tooltip
@@ -477,17 +490,40 @@ class Win32TrayIcon(QObject):
                 nid.uFlags |= NIF_ICON
 
         message = NIM_ADD if add else NIM_MODIFY
-        ok = shell32.Shell_NotifyIconW(message, ctypes.byref(nid))
+        ok = self._notify(message, nid)
         if not ok and message == NIM_MODIFY:
             # explorer.exe 可能刚重启、还没收到我们已经错过的 TaskbarCreated，
             # MODIFY 一个不存在的图标会失败，退回尝试 ADD 兜底。
-            ok = shell32.Shell_NotifyIconW(NIM_ADD, ctypes.byref(nid))
+            ok = self._notify(NIM_ADD, nid)
+        if not ok and self._use_guid:
+            # Windows 会把 GUID 托盘身份绑定到首次注册它的 EXE 完整路径，程序迁移
+            # 目录后会为了防冒充而拒绝同一 GUID。已发布 GUID 不能改；退回同样稳定的
+            # hWnd+uID 身份，保证自定义安装目录/QA 构建仍能显示两个独立图标。
+            self._use_guid = False
+            nid.uFlags &= ~NIF_GUID
+            ok = self._notify(NIM_ADD, nid)
         if ok:
             self._added = True
+            self._retry_scheduled = False
+        elif self._visible and not self._retry_scheduled:
+            # Explorer 仍在启动时两种身份都可能暂时失败；延迟重试，不能让一次
+            # 启动时序问题把图标永久留在缺失状态。
+            self._retry_scheduled = True
+            QTimer.singleShot(500, self._retry_add)
         if new_hicon:
             if self._hicon:
                 user32.DestroyIcon(self._hicon)
             self._hicon = new_hicon
+
+    @staticmethod
+    def _notify(message: int, nid: NOTIFYICONDATAW) -> bool:
+        """Small Python seam around Shell_NotifyIconW for safe unit testing."""
+        return bool(shell32.Shell_NotifyIconW(message, ctypes.byref(nid)))
+
+    def _retry_add(self) -> None:
+        self._retry_scheduled = False
+        if self._visible and not self._added:
+            self._push(update_icon=True, add=True)
 
     def _remove(self) -> None:
         if self._added:
@@ -495,10 +531,12 @@ class Win32TrayIcon(QObject):
             nid.cbSize = ctypes.sizeof(NOTIFYICONDATAW)
             nid.hWnd = self._host.hwnd
             nid.uID = self._uid
-            nid.uFlags = NIF_GUID
-            nid.guidItem = self._guid
+            if self._use_guid:
+                nid.uFlags = NIF_GUID
+                nid.guidItem = self._guid
             shell32.Shell_NotifyIconW(NIM_DELETE, ctypes.byref(nid))
             self._added = False
+        self._retry_scheduled = False
         if self._hicon:
             user32.DestroyIcon(self._hicon)
             self._hicon = None

@@ -66,11 +66,13 @@ The Windows app shows Claude Code and Codex quota as two compact taskbar tray ic
   </tr>
 </table>
 
-Tray icons: <img src="docs/screenshot-windows-tray-icons-v0324.png" width="90" alt="Claude and Codex Windows tray icons" />
+Tray icons: <img src="docs/screenshot-windows-tray-icons-v0326.png" width="90" alt="Claude and Codex Windows tray icons" />
+
+The icons redraw immediately when Windows switches between light and dark modes, and recover if Explorer rebuilds the notification area. Claude digits use a white/orange split for contrast against the orange quota fill, while Codex digits use a black/white split against its monochrome fill.
 
 **Install**
 
-Download `ai-limit-<version>-setup.exe` from the latest [GitHub Release](https://github.com/zhuchenxi113/ai-limit/releases/latest) or [Gitee Release](https://gitee.com/zhuchenxi113/ai-limit/releases). The installer uses a visible, per-user setup wizard and does not require administrator access.
+Download `ai-limit-windows-<version>-setup.exe` from the latest [GitHub Release](https://github.com/zhuchenxi113/ai-limit/releases/latest) or [Gitee Release](https://gitee.com/zhuchenxi113/ai-limit/releases). The installer uses a visible, per-user setup wizard and does not require administrator access.
 
 > The current Windows build does not have an Authenticode certificate. Windows may show **Unknown publisher** or a SmartScreen warning. This is expected for the unsigned release; do not continue if the filename or download source is unexpected.
 

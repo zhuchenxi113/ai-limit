@@ -6,6 +6,13 @@ AI Limit's Windows updater downloads and launches an installer only after a sequ
 
 An official Windows release uses these assets:
 
+- `ai-limit-windows-<version>-setup.exe`
+- `ai-limit-windows-<version>-setup.exe.sig`
+
+For compatibility with the updater shipped in v0.3.25, each release also carries
+an independently signed legacy-name copy. It is for automatic updates only;
+manual downloads should use the platform-qualified filename above:
+
 - `ai-limit-<version>-setup.exe`
 - `ai-limit-<version>-setup.exe.sig`
 

@@ -4,7 +4,7 @@
 # 流程：
 #   1. 检查 dist/AI Limit.app 存在（不存在则提示先 py2app）
 #   2. 在临时目录拼一个挂载结构：AI Limit.app + 软链到 /Applications
-#   3. hdiutil create UDZO 压缩，输出 dist/ai-limit-<version>.dmg
+#   3. hdiutil create UDZO 压缩，输出 dist/ai-limit-macos-<version>.dmg
 #
 # 依赖：只用系统自带 hdiutil，无需 brew create-dmg。
 
@@ -20,7 +20,7 @@ fi
 
 VERSION=$(plutil -extract CFBundleShortVersionString raw "$BUNDLE/Contents/Info.plist")
 VOLNAME="AI Limit"
-DMG_OUT="dist/ai-limit-${VERSION}.dmg"
+DMG_OUT="dist/ai-limit-macos-${VERSION}.dmg"
 
 STAGE=$(mktemp -d -t ai-limit-dmg)
 trap 'rm -rf "$STAGE"' EXIT
