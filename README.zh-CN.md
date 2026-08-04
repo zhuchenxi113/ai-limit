@@ -1,6 +1,6 @@
 # ai-limit
 
-[English](README.md) | 中文说明
+[English](README.md) | 简体中文说明 | [繁體中文](README.zh-TW.md)
 
 官方下载地址：https://github.com/zhuchenxi113/ai-limit/releases
 
