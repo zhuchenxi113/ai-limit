@@ -104,6 +104,38 @@ public static extern IntPtr SendMessageTimeout(
 # 新开的终端窗口会自动从注册表读到新 PATH，不需要这一步。
 $env:Path = "$env:Path;$InstallDir"
 
+# ── WSL2：顺手加一条别名，让裸敲 ai-limit 也能用 ────────────────────────────
+# WSL2 默认把 Windows PATH 接进自己的 $PATH（interop），所以 ai-limit.exe
+# 已经能在 WSL2 的 bash 里调用——但 bash 按精确文件名匹配 PATH 里的可执行
+# 文件，不会像 Windows 的 PATHEXT 那样自动给裸命令名补 .exe，所以额外加一条
+# alias。只在检测到 WSL2 已装好且能跑（`wsl.exe -e true` 成功）时才动手，
+# 且是幂等追加（先 grep 判断是否已存在这一行），不会重复写、不会覆盖用户
+# 已有的 ~/.bashrc 内容。没装 WSL2 的机器上 `wsl.exe` 调用本身就会失败，
+# 直接跳过，不算错误。
+$wslDetected = $false
+try {
+    wsl.exe -e true 2>$null | Out-Null
+    $wslDetected = ($LASTEXITCODE -eq 0)
+} catch {
+    $wslDetected = $false
+}
+
+if ($wslDetected) {
+    Write-Info "检测到 WSL2，顺手在 ~/.bashrc 里加一条 ai-limit 别名…"
+    $aliasLine = 'alias ai-limit="ai-limit.exe"'
+    $bashCmd = "grep -qxF '$aliasLine' ~/.bashrc 2>/dev/null || echo '$aliasLine' >> ~/.bashrc"
+    try {
+        wsl.exe -e bash -c $bashCmd 2>$null | Out-Null
+        if ($LASTEXITCODE -eq 0) {
+            Write-Ok "WSL2 里也能直接敲 ai-limit 了（需要开一个新的 WSL2 终端窗口）"
+        } else {
+            Write-Info "WSL2 别名写入失败（不影响 Windows 侧安装结果，WSL2 里仍可以用 ai-limit.exe）"
+        }
+    } catch {
+        Write-Info "WSL2 别名写入失败（不影响 Windows 侧安装结果，WSL2 里仍可以用 ai-limit.exe）"
+    }
+}
+
 Write-Host ""
 Write-Ok "ai-limit $Version 已安装"
 Write-Host ""
