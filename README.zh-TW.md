@@ -66,8 +66,8 @@ Windows 版用兩個緊湊的工作列圖示分別顯示 Claude Code 和 CodeX �
 
 <table>
   <tr>
-    <td align="center"><img src="docs/screenshot-windows-panel-v0324-zh.png" width="250" alt="AI Limit Windows 中文額度面板" /></td>
-    <td align="center"><img src="docs/screenshot-windows-menu-v0324-zh.png" width="304" alt="AI Limit Windows 中文工作列選單" /></td>
+    <td align="center"><img src="docs/screenshot-windows-panel-v0326-zh-hant.png" width="250" alt="AI Limit Windows 繁體中文額度面板" /></td>
+    <td align="center"><img src="docs/screenshot-windows-menu-v0326-zh-hant.png" width="304" alt="AI Limit Windows 繁體中文工作列選單" /></td>
   </tr>
   <tr>
     <td align="center"><sub>額度面板</sub></td>
