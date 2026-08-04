@@ -3,8 +3,9 @@
 # 用法：
 #   irm https://raw.githubusercontent.com/zhuchenxi113/ai-limit/main/install.ps1 | iex
 #
-# 流程：查询最新 GitHub Release → 下载独立 CLI 可执行文件 ai-limit.exe →
-# 放进 %LOCALAPPDATA%\Programs\ai-limit-cli\ → 把这个目录加进当前用户 PATH
+# 流程：查询最新 GitHub Release → 下载独立 CLI 可执行文件
+# ai-limit-windows-cli.exe → 存成 ai-limit.exe，放进
+# %LOCALAPPDATA%\Programs\ai-limit-cli\ → 把这个目录加进当前用户 PATH
 #
 # 跟托盘 GUI App 的安装包（ai-limit-windows-<version>-setup.exe）是两条独立
 # 路径：这个脚本只装 CLI，不装托盘图标；托盘 App 仍从官网/Release 页面手动
@@ -12,13 +13,19 @@
 # 编译产出，不能复用 GUI 的 ai-limit-tray.exe（console=False，从终端调用
 # 不会输出任何内容，是 Windows 子系统机制决定的）。
 #
+# Release 资产名（ai-limit-windows-cli.exe）跟本地安装后的文件名（ai-limit.exe）
+# 故意不一样：Release 页面上的名字要跟 GUI 安装包明显区分开、避免被手动点错
+# 下载（这份资产是给这个脚本自动下载用的，不是给人在网页上手动点的）；本地
+# 装完之后则要越短越好，因为它就是用户以后敲的命令名。
+#
 # 只写当前用户的注册表（HKCU），不需要管理员权限。
 
 $ErrorActionPreference = "Stop"
 
 $Repo = "zhuchenxi113/ai-limit"
 $InstallDir = Join-Path $env:LOCALAPPDATA "Programs\ai-limit-cli"
-$ExeName = "ai-limit.exe"
+$ReleaseAssetName = "ai-limit-windows-cli.exe"
+$LocalExeName = "ai-limit.exe"
 
 function Write-Info($msg) { Write-Host "  • $msg" -ForegroundColor Cyan }
 function Write-Ok($msg)   { Write-Host "  V $msg" -ForegroundColor Green }
@@ -41,9 +48,9 @@ try {
 $Version = $Release.tag_name
 if (-not $Version) { Write-Die "无法获取版本号，请检查网络或稍后重试" }
 
-$Asset = $Release.assets | Where-Object { $_.name -eq $ExeName } | Select-Object -First 1
+$Asset = $Release.assets | Where-Object { $_.name -eq $ReleaseAssetName } | Select-Object -First 1
 if (-not $Asset) {
-    Write-Die "Release $Version 中未找到 $ExeName（该版本可能还没发布独立 CLI 资产，见开源仓 README）"
+    Write-Die "Release $Version 中未找到 $ReleaseAssetName（该版本可能还没发布独立 CLI 资产，见开源仓 README）"
 }
 
 Write-Ok "最新版本：$Version"
@@ -52,9 +59,9 @@ Write-Ok "最新版本：$Version"
 if (-not (Test-Path $InstallDir)) {
     New-Item -ItemType Directory -Path $InstallDir -Force | Out-Null
 }
-$ExePath = Join-Path $InstallDir $ExeName
+$ExePath = Join-Path $InstallDir $LocalExeName
 
-Write-Info "下载 $ExeName…"
+Write-Info "下载 $ReleaseAssetName…"
 try {
     Invoke-WebRequest -Uri $Asset.browser_download_url -OutFile "$ExePath.tmp" -UseBasicParsing
 } catch {

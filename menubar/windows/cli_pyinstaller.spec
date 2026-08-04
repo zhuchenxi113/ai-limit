@@ -46,7 +46,11 @@ exe = EXE(
     a.zipfiles,
     a.datas,
     [],
-    name="ai-limit",
+    # 名字特意跟 GUI 安装包（ai-limit-windows-<version>-setup.exe）区分开、
+    # 带上 "cli" 关键词——这份资产是给 install.ps1 自动下载用的，不是给人在
+    # Release 页面手动点的；叫 "ai-limit.exe" 太容易被当成正式安装包点错
+    # （双击后只会弹一个终端窗口跑默认参数、瞬间关闭，体验很怪）。
+    name="ai-limit-windows-cli",
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
