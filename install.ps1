@@ -1,4 +1,4 @@
-﻿# ai-limit CLI —— 一键安装脚本（PowerShell）
+# ai-limit CLI —— 一键安装脚本（PowerShell）
 #
 # 用法：
 #   irm https://raw.githubusercontent.com/zhuchenxi113/ai-limit/main/install.ps1 | iex
