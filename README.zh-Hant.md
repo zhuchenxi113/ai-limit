@@ -126,7 +126,13 @@ CLI 支援 macOS 和 Windows，輸出語言根據系統語言自動切換，無�
 
 #### Windows PowerShell
 
-<p align="center"><img src="docs/screenshot-cli-v0324-zh.png" width="653" alt="AI Limit Windows PowerShell CLI 中文效果" /></p>
+如需明確指定語言（而不是跟隨系統語言自動判斷），在 PowerShell 用以下語法（注意不是 bash 的 `VAR=value command` 寫法，PowerShell 沒有這種內聯語法）：
+
+```powershell
+$env:AI_LIMIT_LANG = "zh-Hant"; ai-limit
+```
+
+<p align="center"><img src="docs/screenshot-cli-v0327-zh-hant-windows.png" width="653" alt="AI Limit Windows PowerShell CLI 繁體中文效果" /></p>
 
 ### 環境需求
 
