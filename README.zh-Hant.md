@@ -159,7 +159,7 @@ ai-limit 只讀取你本機已有的 Claude / ChatGPT 登入狀態與本地使�
 irm https://raw.githubusercontent.com/zhuchenxi113/ai-limit/main/install.ps1 | iex
 ```
 
-這會下載一個獨立的 `ai-limit.exe`（不需要安裝 Python），並加入你的使用者 `PATH`。之後開一個新的 PowerShell（或 Windows Terminal / WSL2）視窗，直接執行 `ai-limit` 即可。只寫入目前使用者範圍的 `PATH`，不需要系統管理員權限。這跟上面的 Windows 系統匣 App 安裝程式是兩回事，裝一個不會自動裝另一個。
+這會下載一個獨立的 `ai-limit.exe`（不需要安裝 Python），並加入你的使用者 `PATH`。之後開一個新的 PowerShell（或 Windows Terminal / WSL2）視窗，直接執行 `ai-limit` 即可。只寫入目前使用者範圍的 `PATH`，不需要系統管理員權限。這跟上面的 Windows 工作列 App 安裝程式是兩回事，裝一個不會自動裝另一個。
 
 **macOS／任意平台手動安裝：複製原始碼執行**
 
