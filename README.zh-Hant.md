@@ -254,7 +254,7 @@ Windows 工作列固定讀取 Firefox，只使用瀏覽器分析端點；不顯�
 
 ## 作者其他專案
 
-- [CalcPro — 計算機](https://apps.apple.com/us/app/calcpro-calculator-waitsugar/id6759244291)：可在 App Store 下載；如果連結無法直接開啟，請在 App Store 搜尋「WaitSugar CalcPro」。
+- [CalcPro — 計算機](https://apps.apple.com/cn/app/id6759244291)：可在 App Store 下載；如果連結無法直接開啟，請在 App Store 搜尋「WaitSugar CalcPro」。
 - [觀點會審](https://decide.waitsugar.com/)：網頁版決策輔助工具。
 
 ## License

@@ -238,7 +238,7 @@ This is a personal tool maintained on a best-effort basis. Issues and PRs are we
 
 ## Other projects by the author
 
-- [CalcPro — Calculator](https://apps.apple.com/us/app/calcpro-calculator-waitsugar/id6759244291): Available on the App Store. If the link doesn't open on your device, search for "WaitSugar CalcPro" in the App Store.
+- [CalcPro — Calculator](https://apps.apple.com/us/app/id6759244291): Available on the App Store. If the link doesn't open on your device, search for "WaitSugar CalcPro" in the App Store.
 - [观点会审 (Decide)](https://decide.waitsugar.com/): A web-based decision-making tool.
 
 ## License
