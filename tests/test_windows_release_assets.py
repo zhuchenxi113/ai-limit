@@ -12,7 +12,7 @@ import prepare_windows_release_assets
 
 
 class WindowsReleaseAssetsTests(unittest.TestCase):
-    def test_prepares_platform_asset_and_independently_signed_legacy_copy(self):
+    def test_prepares_and_signs_platform_asset(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             canonical = pathlib.Path(temp_dir) / (
                 "ai-limit-windows-0.3.26-setup.exe"
@@ -34,18 +34,12 @@ class WindowsReleaseAssetsTests(unittest.TestCase):
                 canonical, "test-key", signer=fake_signer
             )
 
-            legacy = canonical.with_name("ai-limit-0.3.26-setup.exe")
-            self.assertEqual(legacy.read_bytes(), canonical.read_bytes())
-            self.assertEqual(
-                signed_names,
-                [canonical.name, legacy.name],
-            )
+            self.assertEqual(signed_names, [canonical.name])
             self.assertEqual(
                 [item[0].name for item in prepared],
-                [canonical.name, legacy.name],
+                [canonical.name],
             )
             self.assertTrue(canonical.with_name(canonical.name + ".sig").is_file())
-            self.assertTrue(legacy.with_name(legacy.name + ".sig").is_file())
 
     def test_rejects_installer_without_platform_qualified_name(self):
         with tempfile.TemporaryDirectory() as temp_dir:

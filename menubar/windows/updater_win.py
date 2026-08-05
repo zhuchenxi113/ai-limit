@@ -19,8 +19,8 @@ import urllib.parse
 
 import update_signing
 
-_RELEASES_API_URL = "https://api.github.com/repos/zhuchenxi113/ai-limit/releases/latest"
-_GITEE_RELEASES_API_URL = "https://gitee.com/api/v5/repos/zhuchenxi113/ai-limit/releases?per_page=1&direction=desc"
+_RELEASES_API_URL = "https://api.github.com/repos/zhuchenxi113/ai-limit/releases?per_page=10"
+_GITEE_RELEASES_API_URL = "https://gitee.com/api/v5/repos/zhuchenxi113/ai-limit/releases?per_page=10&direction=desc"
 _RELEASES_PAGE_URL = "https://github.com/zhuchenxi113/ai-limit/releases"
 _GITEE_RELEASES_PAGE_URL = "https://gitee.com/zhuchenxi113/ai-limit/releases"
 
@@ -28,8 +28,10 @@ _GITEE_RELEASES_PAGE_URL = "https://gitee.com/zhuchenxi113/ai-limit/releases"
 # 同一个环境变量名/同一套用法，方便端到端联调不依赖真实公开 Release。
 _RELEASE_FEED_OVERRIDE = os.environ.get("AI_LIMIT_RELEASE_FEED_OVERRIDE")
 
-# v0.3.26 起正式 Windows 资产带平台名。旧名必须继续作为兼容资产发布，
-# 因为 v0.3.25 更新器会精确查找 ai-limit-<version>-setup.exe。
+# v0.3.26 起正式 Windows 资产带平台名。旧名 fallback 原本是为了兼容
+# v0.3.25 更新器（它精确查找 ai-limit-<version>-setup.exe）；v0.3.27 起
+# 已不再发布旧名资产（见 AI_CONTEXT.md 约束 12），这里的 fallback 分支
+# 对新发布的 Release 永远不会命中，只是无害保留，不代表旧名资产还在发。
 _SETUP_ASSET_RE = re.compile(r"^ai-limit-windows-.*-setup\.exe$")
 _LEGACY_SETUP_ASSET_RE = re.compile(r"^ai-limit-.*-setup\.exe$")
 
@@ -82,6 +84,25 @@ def _pick_signature_asset(assets, setup_name):
     return None, None
 
 
+def _pick_release_with_setup_asset(releases):
+    """从新到旧扫描 Release 列表，返回第一条带 Windows 安装资产的版本。
+
+    单平台先发布期间，最新一条 Release 可能只有另一个平台（macOS）的
+    资产；直接取最新 tag 会让 Windows 端错误地提示"有更新"却找不到能下载
+    的安装包。跳过 draft/prerelease，保持跟旧版直接调用 releases/latest
+    时的隐式过滤行为一致（详见 docs/reference/lessons.md 2026-08-04 条目）。
+    """
+    for release in releases or []:
+        if release.get("draft") or release.get("prerelease"):
+            continue
+        tag = release.get("tag_name", "").lstrip("v")
+        assets = release.get("assets")
+        asset_url, asset_name = _pick_setup_asset(assets, tag)
+        if asset_url:
+            return tag, assets, asset_url, asset_name
+    return None, None, None, None
+
+
 def _validate_download_url(url: str) -> None:
     """只允许官方 Release 使用的 HTTPS 主机；测试 feed 可使用 file://。"""
     parsed = urllib.parse.urlparse(url)
@@ -111,36 +132,41 @@ def fetch_latest_release_info(timeout=6) -> dict:
         with urllib.request.urlopen(req, timeout=timeout) as r:
             return json.loads(r.read())
 
-    def _result(latest, source, assets):
-        out = {"latest": latest, "source": source}
-        asset_url, asset_name = _pick_setup_asset(assets, latest)
-        if asset_url:
-            out["asset_url"] = asset_url
-            out["asset_name"] = asset_name
-            signature_url, signature_name = _pick_signature_asset(assets, asset_name)
-            if signature_url:
-                out["signature_url"] = signature_url
-                out["signature_name"] = signature_name
+    def _result_from_releases(releases, source):
+        tag, assets, asset_url, asset_name = _pick_release_with_setup_asset(releases)
+        if tag is None:
+            return {"error": True}
+        out = {"latest": tag, "source": source, "asset_url": asset_url, "asset_name": asset_name}
+        signature_url, signature_name = _pick_signature_asset(assets, asset_name)
+        if signature_url:
+            out["signature_url"] = signature_url
+            out["signature_name"] = signature_name
         return out
 
     if _RELEASE_FEED_OVERRIDE:
         try:
             data = _get_json(_RELEASE_FEED_OVERRIDE)
-            return _result(data["tag_name"].lstrip("v"), "github", data.get("assets"))
+            return _result_from_releases([data], "github")
         except Exception:
             return {"error": True}
 
     try:
         data = _get_json(_RELEASES_API_URL)
-        return _result(data["tag_name"].lstrip("v"), "github", data.get("assets"))
+        result = _result_from_releases(data, "github")
+        if not result.get("error"):
+            return result
     except Exception:
         pass
 
     try:
         data = _get_json(_GITEE_RELEASES_API_URL)
-        return _result(data[0]["tag_name"].lstrip("v"), "gitee", data[0].get("assets"))
+        result = _result_from_releases(data, "gitee")
+        if not result.get("error"):
+            return result
     except Exception:
-        return {"error": True}
+        pass
+
+    return {"error": True}
 
 
 def download_release_setup(url, dest_dir, timeout=30, total_timeout=600):

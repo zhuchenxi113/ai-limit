@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
-"""生成正式 Windows 安装资产及供 v0.3.25 更新器使用的旧名兼容资产。"""
+"""签署正式 Windows 安装资产。
+
+v0.3.27 起不再生成服务 v0.3.25 老更新器的旧名兼容副本
+（见 AI_CONTEXT.md 约束 12、Decision Ledger decision-20260805-102304-f1d0）。
+"""
 import argparse
-import os
 import pathlib
 import re
-import shutil
 import sys
 
 from sign_windows_update import DEFAULT_KEY_PATH, sign_installer
@@ -17,7 +19,7 @@ _CANONICAL_NAME_RE = re.compile(
 
 def prepare_release_assets(installer_path, key_path=DEFAULT_KEY_PATH,
                            signer=sign_installer):
-    """签署正式资产，并生成内容相同、文件名独立签署的旧名兼容副本。"""
+    """签署正式资产。"""
     installer = pathlib.Path(installer_path).resolve()
     match = _CANONICAL_NAME_RE.fullmatch(installer.name)
     if not installer.is_file():
@@ -30,17 +32,8 @@ def prepare_release_assets(installer_path, key_path=DEFAULT_KEY_PATH,
 
     canonical_signature, canonical_document = signer(installer, key_path)
 
-    legacy_installer = installer.with_name(
-        f"ai-limit-{match.group('version')}-setup.exe"
-    )
-    temp_installer = legacy_installer.with_name(legacy_installer.name + ".tmp")
-    shutil.copy2(installer, temp_installer)
-    os.replace(temp_installer, legacy_installer)
-    legacy_signature, legacy_document = signer(legacy_installer, key_path)
-
     return (
         (installer, canonical_signature, canonical_document),
-        (legacy_installer, legacy_signature, legacy_document),
     )
 
 
