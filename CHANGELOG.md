@@ -2,6 +2,21 @@
 
 All notable user-facing changes to AI Limit are documented here.
 
+## 0.3.27 - 2026-08-05
+
+### Added
+
+- The Windows tray app, Windows CLI, and macOS menu bar app now detect Traditional Chinese (`zh-Hant`) as a distinct third language state alongside Simplified Chinese and English, instead of collapsing every Chinese locale into Simplified.
+
+### Fixed
+
+- The Windows quota panel timezone name no longer mixes in Simplified Chinese characters when the OS locale is Simplified Chinese but the language is explicitly forced to Traditional Chinese via `AI_LIMIT_LANG`.
+- The update check now scans release history for the first release that actually has a matching installer asset, instead of assuming the newest tag always does. This avoids showing "update available" during a brief window when a new release exists for only one platform.
+
+### Removed
+
+- Releases no longer include a legacy-name compatibility installer for the updater shipped in v0.3.25. If you are still on v0.3.25 or earlier and have not updated since, your in-app update check will no longer find a matching asset; please download and install the latest release manually from the Releases page.
+
 ## 0.3.26 - 2026-08-03
 
 ### Changed
