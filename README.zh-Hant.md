@@ -122,7 +122,7 @@ CLI 支援 macOS 和 Windows，輸出語言根據系統語言自動切換，無�
 
 #### macOS 終端機
 
-<p align="center"><img src="docs/screenshot-cli-v0321.png" width="653" alt="AI Limit macOS 終端機 CLI 中文效果" /></p>
+<p align="center"><img src="docs/screenshot-cli-v0327-zh-hant.png" width="653" alt="AI Limit macOS 終端機 CLI 繁體中文效果" /></p>
 
 #### Windows PowerShell
 
