@@ -2,7 +2,7 @@
 
 [English](README.md) | 简体中文 | [繁體中文](README.zh-Hant.md)
 
-官方下载地址：https://github.com/zhuchenxi113/ai-limit/releases
+GitHub 下载：https://github.com/zhuchenxi113/ai-limit/releases
 
 官网：https://ai-limit.waitsugar.com
 
