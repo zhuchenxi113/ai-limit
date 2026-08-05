@@ -130,11 +130,20 @@ try {
 if ($wslDetected) {
     Write-Info "检测到 WSL2，顺手在 ~/.bashrc 里加一条 ai-limit 别名…"
     $aliasLine = 'alias ai-limit="ai-limit.exe"'
-    $bashCmd = "grep -qxF '$aliasLine' ~/.bashrc 2>/dev/null || echo '$aliasLine' >> ~/.bashrc"
+    # WSL2 默认不会把 Linux 侧的环境变量转发给通过 interop 调起的 Windows exe——
+    # 只有列在 $WSLENV 里的变量名才会跨这条进程边界，否则像
+    # `AI_LIMIT_LANG=zh-Hant ai-limit` 这样的写法在 WSL2 里会被静默忽略，
+    # ai-limit.exe 那边完全看不到这个变量，只能回退读 Windows 系统区域设置
+    # （2026-08-05 真实发生过一次：用户在 WSL2 里显式指定繁体，实际却输出简体）。
+    # 这里显式声明 AI_LIMIT_LANG 走 WSLENV，且用 "$WSLENV" 把已有值接在后面，
+    # 不会覆盖 Windows Terminal 等工具可能已经设置的其他 WSLENV 条目。
+    $wslenvLine = 'export WSLENV="AI_LIMIT_LANG:$WSLENV"'
+    $bashCmd = "grep -qxF '$aliasLine' ~/.bashrc 2>/dev/null || echo '$aliasLine' >> ~/.bashrc; " +
+        "grep -qxF '$wslenvLine' ~/.bashrc 2>/dev/null || echo '$wslenvLine' >> ~/.bashrc"
     try {
         wsl.exe -e bash -c $bashCmd 2>$null | Out-Null
         if ($LASTEXITCODE -eq 0) {
-            Write-Ok "WSL2 里也能直接敲 ai-limit 了（需要开一个新的 WSL2 终端窗口）"
+            Write-Ok "WSL2 里也能直接敲 ai-limit 了，AI_LIMIT_LANG 也能正常传进去（需要开一个新的 WSL2 终端窗口）"
         } else {
             Write-Info "WSL2 别名写入失败（不影响 Windows 侧安装结果，WSL2 里仍可以用 ai-limit.exe）"
         }
