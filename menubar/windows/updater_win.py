@@ -263,7 +263,22 @@ def download_release_signature(url, dest_dir, timeout=30):
 
 
 def _authenticode_status(installer_path) -> str:
+    """起 Windows PowerShell 5.1 子进程查询 Authenticode 状态。
+
+    父进程链若经过 PowerShell 7（pwsh），其运行时会把自己的 Core-only
+    模块目录前置写入本进程 PSModulePath 并原样传给子进程；中间只要隔着
+    一层原生进程（如本项目场景下的 python.exe），pwsh 对直接子进程做的
+    路径清理就会被绕过。5.1 按路径顺序自动加载模块时会先撞见与其运行时
+    不兼容的 pwsh 版 Microsoft.PowerShell.Security 而报
+    CouldNotAutoloadMatchingModule（同一机制见 openai/codex#27117、
+    PowerShell/PowerShell#8863/#9957/#20804）。生产环境下本函数由
+    explorer.exe/Run 注册表项直接拉起的 ai-limit-tray.exe 调用，进程链
+    不含 pwsh，不受影响；但开发/CI（pwsh 终端、GitHub Actions
+    windows-latest 默认 shell）会稳定触发，故显式清掉这个变量，交给 5.1
+    按自身默认规则重建，而不是依赖调用者进程链是否干净。
+    """
     installer_str = str(installer_path)
+    env = {k: v for k, v in os.environ.items() if k.upper() != "PSMODULEPATH"}
     proc = subprocess.run(
         ["powershell", "-NoProfile", "-Command",
          "& { param([string]$Path) "
@@ -271,6 +286,7 @@ def _authenticode_status(installer_path) -> str:
          installer_str],
         capture_output=True, text=True, timeout=30,
         creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        env=env,
     )
     status = proc.stdout.strip()
     if proc.returncode != 0 or not status:
