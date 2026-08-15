@@ -34,7 +34,7 @@ _CODEX_WINDOW_CACHE = pathlib.Path.home() / ".codex_window_cache"
 _MENUBAR_HISTORY_PATH = pathlib.Path.home() / ".ai-limit-menubar-history.jsonl"
 TZ_LOCAL = datetime.datetime.now().astimezone().tzinfo
 TZ_ABBR  = datetime.datetime.now().astimezone().strftime('%Z')
-__version__ = "0.3.27"
+__version__ = "0.3.28"
 
 # ── 外观配置（可直接修改） ────────────────────────────────────────────────────
 WARN_THRESHOLD = 20    # 剩余低于此值（%）显示黄色
@@ -611,21 +611,115 @@ def _claude_web_context(referer: str, browser: str = "auto") -> tuple[str, dict]
     return org_id, headers
 
 
+def _resolve_host_with_deadline(host: str, deadline: float) -> str | None:
+    """在独立线程里跑 socket.getaddrinfo，用 join(deadline) 强制限时返回 IP。
+
+    macOS 系统 DNS 解析器（mDNSResponder）一旦对某个域名卡住陈旧的失败缓存，
+    getaddrinfo 会一直挂到系统内部自己的重试超时（实测约 30 秒），完全无视
+    调用方传给 urlopen 的 timeout 参数——必须用独立线程 + join(deadline) 才能
+    真正限时退出，让调用方有机会切到 DoH 兜底，而不是干等半分钟
+    （具体故障现象见 docs/reference/lessons.md「状态圆点灰色但浏览器访问
+    状态页正常」）。超时或解析失败都返回 None；解析线程本身可能仍在后台跑，
+    daemon=True 保证不会阻塞进程退出。"""
+    result: dict = {}
+
+    def _resolve():
+        try:
+            result["ip"] = socket.getaddrinfo(host, 443, socket.AF_INET)[0][4][0]
+        except Exception:
+            pass
+
+    t = threading.Thread(target=_resolve, daemon=True)
+    t.start()
+    t.join(deadline)
+    return result.get("ip")
+
+
+def _is_ipv4_literal(value) -> bool:
+    if not isinstance(value, str):
+        return False
+    try:
+        socket.inet_aton(value)
+        return True
+    except OSError:
+        return False
+
+
+def _resolve_host_via_doh(host: str, timeout: float) -> str | None:
+    """通过 Cloudflare DNS-over-HTTPS（字面量 IP 1.1.1.1，不查域名本身，避免
+    鸡生蛋问题）解析出一个 A 记录 IP。用作系统解析器卡住/失败时的兜底——这条
+    请求直连 IP，不经过系统 getaddrinfo，绕开陈旧失败缓存可能造成的持续失败。
+    失败返回 None。"""
+    import urllib.request
+
+    req = urllib.request.Request(
+        f"https://1.1.1.1/dns-query?name={host}&type=A",
+        headers={"Accept": "application/dns-json"},
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            data = json.loads(r.read())
+    except Exception:
+        return None
+    for ans in data.get("Answer", []):
+        if ans.get("type") == 1 and _is_ipv4_literal(ans.get("data")):
+            return ans["data"]
+    return None
+
+
+def _fetch_json_via_resolved_ip(url: str, host: str, ip: str, timeout: int) -> dict:
+    """直接连到已经解析好的 IP 发起 HTTPS 请求，跳过 urlopen 内部会重新触发的
+    系统 DNS 解析。TLS SNI 和 Host 头仍然用原域名——证书按域名校验、边缘节点
+    也按域名分发内容，两者都不能传 IP。"""
+    import http.client
+    import ssl
+    from urllib.parse import urlsplit
+
+    parts = urlsplit(url)
+    path = parts.path or "/"
+    if parts.query:
+        path += "?" + parts.query
+
+    ctx = ssl.create_default_context()
+    sock = socket.create_connection((ip, 443), timeout=timeout)
+    ssock = ctx.wrap_socket(sock, server_hostname=host)
+    conn = http.client.HTTPConnection(host, timeout=timeout)
+    conn.sock = ssock
+    try:
+        conn.request("GET", path, headers={
+            "Host": host,
+            "Accept": "application/json",
+            "User-Agent": _chrome_ua(),
+        })
+        resp = conn.getresponse()
+        body = resp.read()
+        if resp.status != 200:
+            raise OSError(f"HTTP {resp.status} fetching {url}")
+        return json.loads(body)
+    finally:
+        conn.close()
+
+
 def fetch_status_components(url: str, timeout: int = 5) -> list[dict] | None:
     """拉 Statuspage components.json，返回 [{'id','name','status'}] 全量列表。
-    超时/网络错误重试一次；两次都失败返回 None——调用方不能拿 None 当"维持上次的值",
-    必须显式展示"未知"，呼应额度数据不能用旧值兜底的同一条原则。"""
-    import urllib.request
-    import urllib.error
 
-    req = urllib.request.Request(url, headers={
-        "Accept": "application/json",
-        "User-Agent": _chrome_ua(),
-    })
+    解析域名时自带一层自愈：先用限时的系统 DNS 解析（不超过 2.5 秒），卡住或
+    失败就自动切换 DNS-over-HTTPS 兜底，而不是把整台机器上系统解析器的陈旧
+    失败缓存原样透传成"未知"——用户不需要手动 flush 系统 DNS 缓存也能自动
+    恢复（背景见 docs/reference/lessons.md）。超时/网络错误重试一次；两轮都
+    失败返回 None——调用方不能拿 None 当"维持上次的值"，必须显式展示"未知"，
+    呼应额度数据不能用旧值兜底的同一条原则。"""
+    from urllib.parse import urlsplit
+
+    host = urlsplit(url).hostname
     for attempt in range(2):
+        ip = _resolve_host_with_deadline(host, 2.5) or _resolve_host_via_doh(host, 3)
+        if ip is None:
+            if attempt == 0:
+                continue
+            return None
         try:
-            with urllib.request.urlopen(req, timeout=timeout) as r:
-                data = json.loads(r.read())
+            data = _fetch_json_via_resolved_ip(url, host, ip, timeout)
             return [
                 {"id": c["id"], "name": c["name"], "status": c["status"]}
                 for c in data.get("components", [])
