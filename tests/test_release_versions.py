@@ -24,6 +24,6 @@ def test_release_versions_match_across_platforms() -> None:
         (ROOT / "menubar" / "setup.py").read_text(encoding="utf-8"),
     )
 
-    assert application_version == "0.3.27"
+    assert application_version == "0.3.28"
     assert windows_version == application_version
     assert macos_versions == [application_version, application_version]

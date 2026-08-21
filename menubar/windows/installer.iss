@@ -7,7 +7,7 @@
 ; "是不是同一个应用的升级安装"，改了会导致老版本卸载残留、新版本被当成
 ; 全新应用重复安装。
 
-#define AppVersion "0.3.27"
+#define AppVersion "0.3.28"
 
 [Setup]
 AppId={{FE4A5B6A-1833-45D6-80E5-0FADAC018795}
