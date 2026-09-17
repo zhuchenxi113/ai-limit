@@ -230,6 +230,7 @@ Windows 托盘固定读取 Firefox，只使用浏览器分析端点；不显示�
 ## 说明
 
 - Windows 浏览器 Cookie 读取仅支持 Firefox；macOS 可使用系统 Keychain 解密浏览器 Cookie
+- **macOS 升级后突然读不到 Cookie**：如果升级 macOS 后 Claude Code 和 CodeX 同时报"无法读取浏览器 cookie"，去「系统设置 → 隐私与安全性 → 完全磁盘访问权限」确认 AI Limit 已开启。即使看起来已经开着，也可以尝试关闭再打开（或者只是重新打开一下这个设置页面），然后重启 App——具体机制尚未完全确认，但实测这样能恢复
 - Claude 额度使用的是 claude.ai 内部接口，**非官方 API**，可能随版本变化失效
 - **偶发的 ⚠️ 多为 Cloudflare 临时拦截**：claude.ai / chatgpt.com 会对非浏览器请求基于 TLS 指纹做人机校验（带有效 cookie 也可能被拦），表现为 ⚠️，**多数会自行恢复**。这是所有非浏览器访问官网工具的共性问题（官方 Claude Code / Codex CLI 自身也会遇到），非本工具缺陷，通常无需处理。若 ⚠️ 持续不消，从菜单打开「Claude 用量页」或「CodeX 分析页」，**保持该标签页不关闭**，效果更好
 - `<synthetic>` 模型记录是 Claude Code 遇到 API 错误时写入的占位，不计入统计

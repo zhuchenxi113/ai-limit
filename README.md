@@ -221,6 +221,7 @@ The Windows tray reads Firefox only and uses only the browser analytics endpoint
 ## Notes
 
 - Windows browser-cookie reading supports Firefox only; macOS can decrypt browser cookies through Keychain
+- **macOS: cookie reading breaks right after a macOS upgrade**: if both Claude Code and Codex suddenly show "cannot read browser cookies", check System Settings → Privacy & Security → Full Disk Access and make sure "AI Limit" is turned on. Even if it already looks on, try toggling it off/on (or simply reopening that settings pane) and relaunch the app — the exact mechanism isn't fully confirmed, but this has resolved it in practice
 - **Unofficial API**: Claude quota is fetched from an internal claude.ai endpoint, not an official API — it may break with future updates
 - **Occasional ⚠️ (Cloudflare challenge)**: claude.ai / chatgpt.com may temporarily serve a Cloudflare bot-challenge to non-browser requests (based on TLS fingerprint — even a valid cookie can be blocked), surfaced as a ⚠️. It usually clears on its own. This affects any non-browser tool accessing these sites — the official Claude Code / Codex CLIs hit the same thing — so it is not a defect of ai-limit and generally needs no action. If the warning persists, open the Claude usage page or CodeX dashboard from the menu and **keep the tab open** — the active browser session accelerates recovery
 - `<synthetic>` model entries are error placeholders written by Claude Code on API failures; they are excluded from all statistics
